@@ -7,6 +7,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'node:fs';
 import {
+  serverTimestamp,
   doc,
   setDoc,
   getDoc,
@@ -17,7 +18,7 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getBytes } from 'firebase/storage';
-import { saveAction } from '../../src/lib/firebase';
+import { saveAction, initializeProject } from '../../src/lib/firebase';
 import type { Firestore } from 'firebase/firestore';
 import { createSeed } from '../../src/lib/seed';
 import { transition, type CompletionReport, type State } from '../../src/lib/domain';
@@ -309,4 +310,130 @@ it('persists real client transactions: edits, collaborative report, Owner approv
   expect((await snapshot()).pointAwards.filter((a) => a.missionId === 'mission-2-2')).toHaveLength(
     3,
   );
+});
+
+it('defaults to the requested 0-s0g0.com domain without granting Owner automatically', async () => {
+  await env.withSecurityRulesDisabled((c) => deleteDoc(doc(c.firestore(), 'settings', 'access')));
+  const db = env
+    .authenticatedContext('domain-member', { ...token, email: 'info@0-s0g0.com' })
+    .firestore();
+  await assertSucceeds(
+    setDoc(doc(db, 'users', 'domain-member'), { name: 'Info', role: 'TEAM', active: true }),
+  );
+  await assertFails(getDoc(doc(db, 'rewardPrivate', 'mission-2-2')));
+  const lookalike = env
+    .authenticatedContext('lookalike', { ...token, email: 'info@0-s0g0.com.attacker.example' })
+    .firestore();
+  await assertFails(
+    setDoc(doc(lookalike, 'users', 'lookalike'), { name: 'x', role: 'TEAM', active: true }),
+  );
+});
+
+it('initialization resumes and preserves existing mission edits without fake awards', async () => {
+  await env.clearFirestore();
+  await env.withSecurityRulesDisabled(async (c) => {
+    await setDoc(doc(c.firestore(), 'users', 'demo-owner'), {
+      name: 'Owner',
+      role: 'OWNER',
+      active: true,
+    });
+  });
+  const db = as('demo-owner');
+  await initializeProject(db as unknown as Firestore);
+  expect((await getDocs(collection(db, 'wbsItems'))).size).toBe(104);
+  const mission = (await getDocs(collection(db, 'wbsItems'))).docs.find(
+    (d) => d.data().level === 2,
+  )!;
+  await updateDoc(mission.ref, { title: 'Edited mission' });
+  await initializeProject(db as unknown as Firestore);
+  expect((await getDoc(mission.ref)).data()?.title).toBe('Edited mission');
+  expect((await getDocs(collection(db, 'pointAwards'))).size).toBe(0);
+});
+
+it('unassigned Team can replace active assignees atomically but cannot alter points or finalized work', async () => {
+  const s = createSeed();
+  for (const key of Object.keys(s) as (keyof State)[]) {
+    const rows = await getDocs(collection(as('demo-owner'), key));
+    (s[key] as unknown[]) = rows.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }
+  const actor = s.users.find((u) => u.id === 'demo-sato')!;
+  const db = as(actor.id);
+  await assertSucceeds(
+    saveAction(
+      s,
+      {
+        type: 'assignment',
+        payload: { missionId: 'mission-2-3', assigneeIds: [actor.id], primaryId: actor.id },
+      },
+      actor,
+      db as unknown as Firestore,
+    ),
+  );
+  expect((await getDoc(doc(db, 'wbsItems', 'mission-2-3'))).data()?.assigneeIds).toEqual([
+    actor.id,
+  ]);
+  await assertFails(updateDoc(doc(db, 'wbsItems', 'mission-2-3'), { pointValue: 999 }));
+  await assertFails(
+    updateDoc(doc(db, 'wbsItems', 'mission-1-1'), { assigneeIds: [actor.id], primaryId: actor.id }),
+  );
+  await assertFails(
+    updateDoc(doc(db, 'wbsItems', 'mission-2-3'), {
+      assigneeIds: ['missing'],
+      primaryId: 'missing',
+    }),
+  );
+});
+
+it('login history is immutable, token-bound and readable only by Owner', async () => {
+  const db = env.authenticatedContext('demo-aoki', { ...token, auth_time: 123456 }).firestore();
+  const target = doc(db, 'loginSessions', 'demo-aoki_123456');
+  const record = {
+    userId: 'demo-aoki',
+    email: token.email,
+    authTime: 123456,
+    recordedAt: serverTimestamp(),
+  };
+  await assertSucceeds(setDoc(target, record));
+  await assertSucceeds(getDoc(target));
+  await assertSucceeds(getDocs(collection(as('demo-owner'), 'loginSessions')));
+  await assertFails(getDocs(collection(db, 'loginSessions')));
+  await assertFails(getDoc(doc(as('demo-sato'), 'loginSessions', 'demo-aoki_123456')));
+  await assertFails(
+    setDoc(doc(db, 'loginSessions', 'demo-sato_123456'), { ...record, userId: 'demo-sato' }),
+  );
+  await assertFails(updateDoc(target, { authTime: 42 }));
+  await assertFails(deleteDoc(target));
+});
+
+it('reference step edits are available to assignees, keep sibling progress and reject outsiders', async () => {
+  const actor = createSeed().users.find((u) => u.id === 'demo-aoki')!;
+  const db = as(actor.id);
+  const snapshot = async () => {
+    const s = createSeed();
+    for (const key of Object.keys(s) as (keyof State)[]) {
+      const rows = await getDocs(collection(as('demo-owner'), key));
+      (s[key] as unknown[]) = rows.docs.map((d) => ({ id: d.id, ...d.data() }));
+    }
+    return s;
+  };
+  const before = await snapshot();
+  const existing = before.wbsItems.find((w) => w.wbsCode === '2.2.2')!;
+  await assertSucceeds(saveAction(before, { type: 'subtask', payload: { id: existing.id, operation: 'rename', title: 'Edited reference' } }, actor, db as unknown as Firestore));
+  await assertSucceeds(saveAction(await snapshot(), { type: 'subtask', payload: { missionId: 'mission-2-2', operation: 'add', title: 'New reference' } }, actor, db as unknown as Firestore));
+  const after = await snapshot();
+  const created = after.wbsItems.find((w) => w.title === 'New reference')!;
+  await assertSucceeds(saveAction(after, { type: 'subtask', payload: { id: created.id, operation: 'delete' } }, actor, db as unknown as Firestore));
+  const final = await snapshot();
+  expect(final.wbsItems.find((w) => w.wbsCode === '2.2.1')).toEqual(before.wbsItems.find((w) => w.wbsCode === '2.2.1'));
+  expect(final.wbsItems.find((w) => w.id === existing.id)?.title).toBe('Edited reference');
+  const outside = before.wbsItems.find((w) => w.wbsCode === '2.3.1')!;
+  await assertFails(updateDoc(doc(as('demo-tanaka'), 'wbsItems', outside.id), { title: 'Unauthorized' }));
+});
+
+it('start date updates preserve legacy documents and allow only Owner or assignees', async () => {
+  const target = doc(as('demo-aoki'), 'wbsItems', 'mission-2-3');
+  await assertSucceeds(updateDoc(target, { startDate: '2026-09-21' }));
+  await assertFails(updateDoc(target, { startDate: '2027-04-01' }));
+  await assertFails(updateDoc(doc(as('demo-tanaka'), 'wbsItems', 'mission-2-3'), { startDate: '2026-09-22' }));
+  await assertSucceeds(updateDoc(doc(as('demo-owner'), 'wbsItems', 'mission-2-3'), { startDate: '' }));
 });

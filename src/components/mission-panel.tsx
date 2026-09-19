@@ -1,4 +1,5 @@
 'use client';
+import { SubtaskEditButton } from './subtask-edit-button';
 import { useState } from 'react';
 import { useStore } from '@/lib/store';
 import {
@@ -65,15 +66,7 @@ function SubtaskSection({
   const addSubtask = async () => {
     if (!newSubtask.trim() || !mission) return;
     try {
-      const checklist = [...subtasks.map((s) => s.title), newSubtask.trim()];
-      await act({
-        type: 'mission',
-        payload: {
-          item: mission,
-          checklist,
-          totalAmount: state.rewardPrivate.find((r) => r.id === mission.id)?.totalAmount ?? 0,
-        },
-      });
+      await act({ type: 'subtask', payload: { operation: 'add', missionId, title: newSubtask } });
       setNewSubtask('');
       setMessage('小工程を追加しました。');
     } catch (e) {
@@ -84,15 +77,7 @@ function SubtaskSection({
   const removeSubtask = async (subtaskId: string) => {
     if (!mission) return;
     try {
-      const checklist = subtasks.filter((s) => s.id !== subtaskId).map((s) => s.title);
-      await act({
-        type: 'mission',
-        payload: {
-          item: mission,
-          checklist,
-          totalAmount: state.rewardPrivate.find((r) => r.id === mission.id)?.totalAmount ?? 0,
-        },
-      });
+      await act({ type: 'subtask', payload: { operation: 'delete', id: subtaskId } });
       setMessage('小工程を削除しました。');
     } catch (e) {
       setMessage((e as Error).message);
@@ -122,6 +107,7 @@ function SubtaskSection({
             />
             {c.title}
           </label>
+          {canEdit && <SubtaskEditButton item={c} />}
           {canEdit && (
             <Button
               type="button"
@@ -136,7 +122,9 @@ function SubtaskSection({
         </div>
       ))}
       <Progress
-        value={(progressOf(state, mission!).done / Math.max(1, progressOf(state, mission!).total)) * 100}
+        value={
+          (progressOf(state, mission!).done / Math.max(1, progressOf(state, mission!).total)) * 100
+        }
       />
       {canEdit && (
         <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
@@ -195,7 +183,9 @@ export function MissionPanel({ id, close }: { id: string; close: () => void }) {
             <div className="mission-summary">
               <strong className="point-value">{m.pointValue}pt</strong>
               <Badge status={effectiveStatus(m, state.wbsItems)} />
-              <span>期限 {m.deadline}</span>
+              <span>
+                開始日 {m.startDate || '未設定'} · 期限 {m.deadline}
+              </span>
             </div>
             <p className="prewrap">{m.description}</p>
             <People item={m} />
@@ -219,8 +209,7 @@ export function MissionPanel({ id, close }: { id: string; close: () => void }) {
                   {report ? '終了報告を編集' : '終了報告を作成'}
                 </Button>
               )}
-              {(user.role === 'OWNER' ||
-                (involved && !['COMPLETED'].includes(m.status))) && (
+              {(user.role === 'OWNER' || (involved && !['COMPLETED'].includes(m.status))) && (
                 <Button variant="outline" onClick={() => setMode('edit')}>
                   中工程を編集
                 </Button>
@@ -639,6 +628,7 @@ function MissionEditor({ item, done }: { item?: WbsItem; done: () => void }) {
               ...item,
               status: String(f.get('status')) as WbsItem['status'],
               deadline: String(f.get('deadline')),
+              startDate: String(f.get('startDate') ?? ''),
               assigneeIds: selected,
               primaryId: selected.length ? String(f.get('primaryId')) : null,
               dependencyIds: deps,
@@ -660,6 +650,7 @@ function MissionEditor({ item, done }: { item?: WbsItem; done: () => void }) {
               pointValue,
               status: String(f.get('status')) as WbsItem['status'],
               deadline: String(f.get('deadline')),
+              startDate: String(f.get('startDate') ?? ''),
               assigneeIds: selected,
               primaryId: selected.length ? String(f.get('primaryId')) : null,
               dependencyIds: deps,
@@ -739,6 +730,9 @@ function MissionEditor({ item, done }: { item?: WbsItem; done: () => void }) {
         </>
       )}
       <div className="form-grid">
+        <Field label="開始日（任意）">
+          <input name="startDate" type="date" defaultValue={item?.startDate ?? ''} />
+        </Field>
         <Field label="期限">
           <input
             name="deadline"

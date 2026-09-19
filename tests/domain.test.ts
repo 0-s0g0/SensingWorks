@@ -204,3 +204,37 @@ describe('shared reports and availability', () => {
     expect(weekOf(new Date('2026-09-20T14:59:59Z'))).toBe('2026-09-14');
   });
 });
+
+it('any active member can replace assignees without changing mission conditions or awards', () => {
+  const s = createSeed();
+  const actor = s.users.find((u) => u.id === 'demo-sato')!;
+  const target = s.wbsItems.find((m) => m.id === 'mission-2-3')!;
+  const next = transition(
+    s,
+    {
+      type: 'assignment',
+      payload: { missionId: target.id, assigneeIds: [actor.id], primaryId: actor.id },
+    },
+    actor,
+  );
+  expect(next.wbsItems.find((m) => m.id === target.id)?.assigneeIds).toEqual([actor.id]);
+  expect(next.pointAwards).toEqual(s.pointAwards);
+  expect(() =>
+    transition(
+      s,
+      {
+        type: 'assignment',
+        payload: { missionId: 'mission-1-1', assigneeIds: [actor.id], primaryId: actor.id },
+      },
+      actor,
+    ),
+  ).toThrow();
+});
+
+it('start dates are optional, editable by assignees and cannot exceed deadlines', () => {
+  const s = createSeed(), actor = s.users.find((u) => u.id === 'demo-aoki')!;
+  const next = transition(s, { type: 'schedule', payload: { missionId: 'mission-2-2', startDate: '2026-09-21' } }, actor);
+  expect(next.wbsItems.find((m) => m.id === 'mission-2-2')?.startDate).toBe('2026-09-21');
+  for (const date of ['2027-04-01', '2027-02-30']) expect(() => transition(s, { type: 'schedule', payload: { missionId: 'mission-2-2', startDate: date } }, actor)).toThrow();
+  expect(transition(next, { type: 'schedule', payload: { missionId: 'mission-2-2', startDate: '' } }, actor).wbsItems.find((m) => m.id === 'mission-2-2')?.startDate).toBe('');
+});

@@ -24,6 +24,7 @@ export type WbsItem = {
   pointValue: number;
   status: Status;
   deadline: string;
+  startDate?: string;
   assigneeIds: string[];
   primaryId: string | null;
   dependencyIds: string[];
@@ -117,6 +118,8 @@ export type State = {
 };
 export type Action = {
   type:
+    | 'schedule'
+    | 'assignment'
     | 'mission'
     | 'phase'
     | 'subtask'
@@ -232,6 +235,16 @@ export function distribute(total: number, users: string[], shares?: Record<strin
 export function safeUrl(url: string) {
   return !url || /^https?:\/\/[^\s]+$/.test(url);
 }
+export function validateStartDate(startDate: string | undefined, deadline: string) {
+  if (!startDate) return;
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
+    !Number.isFinite(Date.parse(startDate)) ||
+    new Date(startDate).toISOString().slice(0, 10) !== startDate
+  )
+    throw Error('開始日を正しい日付で入力してください。');
+  if (startDate > deadline) throw Error('開始日は期限以前の日付にしてください。');
+}
 export function transition(state: State, action: Action, actor: Profile): State {
   if (!actor.active) throw Error('このアカウントは無効です。');
   const s = structuredClone(state),
@@ -249,6 +262,44 @@ export function transition(state: State, action: Action, actor: Profile): State 
     if (!m.assigneeIds.includes(actor.id)) throw Error('担当者のみ操作できます。');
   };
   switch (action.type) {
+    case 'schedule': {
+      const m = mission();
+      if (actor.role !== 'OWNER') assigned(m);
+      const startDate = String(p.startDate ?? '');
+      validateStartDate(startDate, m.deadline);
+      m.startDate = startDate;
+      break;
+    }
+    case 'assignment': {
+      const m = mission();
+      if (['REPORT_SUBMITTED', 'REVIEW', 'COMPLETED'].includes(m.status))
+        throw Error('提出済み・レビュー中・完了済みの担当者は変更できません。');
+      const ids = p.assigneeIds as string[];
+      const primaryId = p.primaryId as string | null;
+      if (
+        !Array.isArray(ids) ||
+        ids.length > 6 ||
+        new Set(ids).size !== ids.length ||
+        ids.some((id) => !s.users.some((u) => u.id === id && u.active))
+      )
+        throw Error('担当者は有効なメンバーから最大6人まで選んでください。');
+      if (ids.length ? !primaryId || !ids.includes(primaryId) : primaryId !== null)
+        throw Error('主担当を1人指定してください。');
+      m.assigneeIds = ids;
+      m.primaryId = primaryId;
+      if (['OPEN', 'ASSIGNED'].includes(m.status)) m.status = ids.length ? 'ASSIGNED' : 'OPEN';
+      s.taskAssignments = s.taskAssignments.filter((a) => a.missionId !== m.id);
+      ids.forEach((userId) =>
+        s.taskAssignments.push({
+          id: `${m.id}_${userId}`,
+          missionId: m.id,
+          userId,
+          isPrimary: userId === primaryId,
+          assignedAt: now,
+        }),
+      );
+      break;
+    }
     case 'phase': {
       owner();
       const item = s.wbsItems.find((x) => x.id === p.id && x.level === 1);
@@ -259,6 +310,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
     case 'mission': {
       const m = p.item as WbsItem,
         old = s.wbsItems.find((x) => x.id === m.id);
+      validateStartDate(m.startDate, m.deadline);
       const isOwner = actor.role === 'OWNER';
       const isTeamEdit = !isOwner && old;
 
@@ -270,9 +322,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
         // ステータスの検証（TEAMはCOMPLETEDには変更不可）
         if (
           m.status === 'COMPLETED' ||
-          !['ASSIGNED', 'IN_PROGRESS', 'REPORT_SUBMITTED', 'REVISION', 'ON_HOLD'].includes(
-            m.status,
-          )
+          !['ASSIGNED', 'IN_PROGRESS', 'REPORT_SUBMITTED', 'REVISION', 'ON_HOLD'].includes(m.status)
         )
           throw Error('ステータスが不正です。');
 
@@ -306,6 +356,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
         // 変更可能なフィールドのみ更新
         old.status = m.status;
         old.deadline = m.deadline;
+        old.startDate = m.startDate ?? '';
         old.assigneeIds = m.assigneeIds;
         old.primaryId = m.primaryId;
         old.dependencyIds = m.dependencyIds;
@@ -428,15 +479,49 @@ export function transition(state: State, action: Action, actor: Profile): State 
       break;
     }
     case 'subtask': {
-      const c = s.wbsItems.find((x) => x.id === p.id && x.level === 3),
-        m = s.wbsItems.find((x) => x.id === c?.parentId);
-      if (!c || !m) throw Error('小工程が見つかりません。');
+      const c = s.wbsItems.find((x) => x.id === p.id && x.level === 3);
+      const m = s.wbsItems.find((x) => x.id === (c?.parentId ?? p.missionId) && x.level === 2);
+      if (!m || (!c && p.operation !== 'add')) throw Error('小工程が見つかりません。');
       if (actor.role !== 'OWNER') {
         assigned(m);
         if (effectiveStatus(m, s.wbsItems) === 'LOCKED') throw Error('前提が未完了です。');
       }
-      if (!Object.keys(referenceLabels).includes(String(p.status))) throw Error('状態が不正です。');
-      c.status = p.status as Status;
+      if (p.operation === 'delete') {
+        s.wbsItems = s.wbsItems.filter((x) => x.id !== c!.id);
+      } else if (p.operation === 'add') {
+        const children = s.wbsItems.filter((x) => x.parentId === m.id);
+        const title = String(p.title ?? '').trim();
+        if (!title || title.length > 20000) throw Error('小工程名を入力してください。');
+        if (children.length >= 30) throw Error('参考小工程は30件までです。');
+        const index =
+          Math.max(0, ...children.map((x) => Number(x.wbsCode.split('.').at(-1)) || 0)) + 1;
+        s.wbsItems.push({
+          ...m,
+          id: uid(),
+          level: 3,
+          parentId: m.id,
+          title,
+          description: '',
+          wbsCode: `${m.wbsCode}.${index}`,
+          order: m.order + index / 100,
+          pointValue: 0,
+          status: 'OPEN',
+          assigneeIds: [],
+          primaryId: null,
+          dependencyIds: [],
+          completedAt: null,
+          approvedBy: null,
+          finalPoints: {},
+        });
+      } else if (p.operation === 'rename') {
+        const title = String(p.title ?? '').trim();
+        if (!title || title.length > 20000) throw Error('小工程名を入力してください。');
+        c!.title = title;
+      } else {
+        if (!Object.keys(referenceLabels).includes(String(p.status)))
+          throw Error('状態が不正です。');
+        c!.status = p.status as Status;
+      }
       break;
     }
     case 'start': {
@@ -585,6 +670,8 @@ export function transition(state: State, action: Action, actor: Profile): State 
     id: uid(),
     userId: actor.id,
     action: {
+      schedule: '開始日を更新',
+      assignment: '担当者を変更',
       mission: '中工程を保存',
       phase: '大工程名を更新',
       subtask: '参考小工程を更新',

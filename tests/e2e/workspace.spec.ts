@@ -6,8 +6,8 @@ test('collaborative report → independent Owner point and cash allocation → c
 }) => {
   await page.goto('/wbs/#mission-2-2');
   await page.getByRole('button', { name: '終了報告を作成', exact: true }).click();
-  await page.getByLabel('実施内容（提出時必須）').fill('CSI同時計測を実装しました');
-  await page.getByLabel('結果（提出時必須）').fill('3台の同期を検証しました');
+  await page.getByLabel('実施内容').fill('CSI同時計測を実装しました');
+  await page.getByLabel('結果').fill('3台の同期を検証しました');
   await page.getByLabel('青木 海斗 申告貢献割合').fill('40');
   await page.getByLabel('田中 美咲 申告貢献割合').fill('30');
   await page.getByLabel('佐藤 蓮 申告貢献割合').fill('20');
@@ -17,7 +17,7 @@ test('collaborative report → independent Owner point and cash allocation → c
   await page.getByLabel('デモユーザー切替').selectOption({ label: '田中 美咲 / Team' });
   await page.goto('/wbs/#mission-2-2');
   await page.getByRole('button', { name: '終了報告を編集', exact: true }).click();
-  await expect(page.getByLabel('実施内容（提出時必須）')).toHaveValue('CSI同時計測を実装しました');
+  await expect(page.getByLabel('実施内容')).toHaveValue('CSI同時計測を実装しました');
   await page.getByLabel('佐藤 蓮 申告貢献割合').fill('30');
   await page.getByRole('button', { name: '終了報告を提出', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('終了報告済');
@@ -71,18 +71,23 @@ test('weekly reports shared with Team, own draft persists, other members read on
   await page.goto('/reports');
   await page.getByRole('button', { name: '週報を提出', exact: true }).click();
   await expect(page.getByText('必須の3項目を入力してください。')).toBeVisible();
-  await page.getByLabel('今週うまくいったこと（提出時必須）').fill('計測基盤を整備');
+  await expect(page.getByLabel('今週うまくいったこと', { exact: true })).toBeFocused();
+  await expect(page.locator('textarea[aria-invalid=true]')).toHaveCount(3);
+  await expect(page.locator('.required-mark')).toHaveCount(3);
+  await page.getByLabel('今週うまくいったこと').fill('計測基盤を整備');
   await page.getByRole('button', { name: '下書き保存', exact: true }).click();
   await page.reload();
-  await expect(page.getByLabel('今週うまくいったこと（提出時必須）')).toHaveValue('計測基盤を整備');
+  await expect(page.getByLabel('今週うまくいったこと')).toHaveValue('計測基盤を整備');
   await page.getByLabel('週報のメンバー').selectOption('demo-tanaka');
-  await expect(page.getByText('計測基盤を整備しました。')).toBeVisible();
+  await expect(page.getByText('この週の週報はまだありません。')).toBeVisible();
   await expect(page.getByRole('button', { name: '週報を提出', exact: true })).toHaveCount(0);
 });
 test('MID partial range deletion, day/week deletion, team read and Owner edit', async ({
   page,
 }) => {
   await page.goto('/availability');
+  await expect(page.getByRole('grid', { name: 'チーム参加状況' })).toBeVisible();
+  await page.getByRole('button', { name: '予定を入力', exact: true }).click();
   const cells = page.getByRole('gridcell');
   await cells.nth(28).hover();
   await page.mouse.down();
@@ -110,7 +115,32 @@ test('MID partial range deletion, day/week deletion, team read and Owner edit', 
   await expect(page.getByRole('grid', { name: 'チーム参加状況' })).toBeVisible();
   await page.getByLabel('デモユーザー切替').selectOption({ label: owner });
   await page.getByLabel('表示する予定').selectOption('demo-tanaka');
+  await page.getByRole('button', { name: '表示中の予定を編集', exact: true }).click();
   await expect(cells.nth(28)).toBeEnabled();
   await page.getByRole('button', { name: 'この週を全削除', exact: true }).click();
   await page.getByRole('button', { name: /予定を保存/ }).click();
+});
+
+test('MID starts with everyone, opens member answers, and returns to overview after personal input', async ({
+  page,
+}) => {
+  await page.goto('/availability');
+  await expect(page.getByLabel('表示する予定')).toHaveValue('team');
+  await expect(page.getByRole('button', { name: /予定を保存/ })).toHaveCount(0);
+  await page.getByRole('gridcell').first().click();
+  await expect(page.getByRole('dialog')).toContainText('青木 海斗');
+  await expect(page.getByRole('dialog')).toContainText('田中 美咲');
+  await page.getByRole('button', { name: '閉じる', exact: true }).click();
+  await page.getByRole('button', { name: '予定を入力', exact: true }).click();
+  await expect(page.getByLabel('表示する予定')).toHaveValue('demo-aoki');
+  await page.getByRole('gridcell').first().focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: '入力を終了', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: /予定を保存/ }).click();
+  await expect(page.getByText('予定を保存しました。')).toBeVisible();
+  await page.getByRole('button', { name: '入力を終了', exact: true }).click();
+  await expect(page.getByLabel('表示する予定')).toHaveValue('team');
+  await page.screenshot({ path: 'docs/screenshots/mid-overview.png', fullPage: true });
+  await page.reload();
+  await expect(page.getByLabel('表示する予定')).toHaveValue('team');
 });

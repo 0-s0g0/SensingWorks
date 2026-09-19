@@ -7,6 +7,7 @@ import {
   signOut,
 } from 'firebase/auth';
 import {
+  serverTimestamp,
   collection,
   connectFirestoreEmulator,
   doc,
@@ -26,6 +27,7 @@ import {
 import { connectStorageEmulator, getBlob, getStorage, ref, uploadBytes } from 'firebase/storage';
 import { type Action, type State, type Profile, type Attachment, transition } from './domain';
 import { initialProject } from './seed';
+import { defaultAccess } from './access-config';
 const config = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
@@ -188,28 +190,35 @@ export async function saveAction(state: State, action: Action, user: Profile, da
     });
   });
 }
-export async function initializeProject() {
-  if (!db) throw Error('Firebase設定がありません。');
-  if (!(await getDocs(query(collection(db, 'wbsItems'), limit(1)))).empty)
-    throw Error('WBSは登録済みです。重複登録しません。');
-  const s = initialProject(),
-    first = writeBatch(db);
-  s.projects.forEach((p) => first.set(doc(db!, 'projects', p.id), dataOf(p)));
-  s.wbsItems
-    .filter((w) => w.level === 1)
-    .forEach((w) => first.set(doc(db!, 'wbsItems', w.id), dataOf(w)));
-  await first.commit();
-  for (const m of s.wbsItems.filter((w) => w.level === 2)) {
-    const batch = writeBatch(db);
-    [m, ...s.wbsItems.filter((w) => w.parentId === m.id)].forEach((w) =>
-      batch.set(doc(db!, 'wbsItems', w.id), dataOf(w)),
+export async function initializeProject(database = db) {
+  if (!database) throw Error('Firebase設定がありません。');
+  const s = initialProject();
+  const base = [
+    ...s.projects.map((p) => ({ key: 'projects', item: p })),
+    ...s.wbsItems.filter((w) => w.level === 1).map((item) => ({ key: 'wbsItems', item })),
+  ];
+  await runTransaction(database, async (tx) => {
+    const snapshots = await Promise.all(
+      base.map(({ key, item }) => tx.get(doc(database, key, item.id))),
     );
-    s.taskDependencies
-      .filter((d) => d.missionId === m.id)
-      .forEach((d) => batch.set(doc(db!, 'taskDependencies', d.id), dataOf(d)));
-    const r = s.rewardPrivate.find((r) => r.id === m.id)!;
-    batch.set(doc(db, 'rewardPrivate', r.id), dataOf(r));
-    await batch.commit();
+    base.forEach(({ key, item }, i) => {
+      if (!snapshots[i].exists()) tx.set(doc(database, key, item.id), dataOf(item));
+    });
+  });
+  for (const m of s.wbsItems.filter((w) => w.level === 2)) {
+    await runTransaction(database, async (tx) => {
+      const target = doc(database, 'wbsItems', m.id);
+      // Each mission group is atomic; a retry preserves all existing work.
+      if ((await tx.get(target)).exists()) return;
+      [m, ...s.wbsItems.filter((w) => w.parentId === m.id)].forEach((w) =>
+        tx.set(doc(database, 'wbsItems', w.id), dataOf(w)),
+      );
+      s.taskDependencies
+        .filter((d) => d.missionId === m.id)
+        .forEach((d) => tx.set(doc(database, 'taskDependencies', d.id), dataOf(d)));
+      const r = s.rewardPrivate.find((r) => r.id === m.id)!;
+      tx.set(doc(database, 'rewardPrivate', r.id), dataOf(r));
+    });
   }
 }
 export async function uploadAttachment(missionId: string, file: File): Promise<Attachment> {
@@ -230,13 +239,20 @@ export async function downloadAttachment(file: Attachment) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export async function saveAccess(allowedDomains: string[], allowedEmails: string[]) {
+  if (
+    allowedDomains.some(
+      (d) => !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(d),
+    ) ||
+    allowedEmails.some((e) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
+  )
+    throw Error('完全なドメイン名・メールアドレスを入力してください。');
   if (!db) throw Error('Firebase設定がありません。');
   await setDoc(doc(db, 'settings', 'access'), { allowedDomains, allowedEmails });
 }
 export async function readAccess() {
-  if (!db) return { allowedDomains: [], allowedEmails: [] };
+  if (!db) return defaultAccess;
   const snap = await getDoc(doc(db, 'settings', 'access'));
-  return (snap.data() ?? { allowedDomains: [], allowedEmails: [] }) as {
+  return (snap.data() ?? defaultAccess) as {
     allowedDomains: string[];
     allowedEmails: string[];
   };
@@ -244,4 +260,33 @@ export async function readAccess() {
 export async function updateUser(id: string, changes: Pick<Profile, 'role' | 'active'>) {
   if (!db) throw Error('Firebase設定がありません。');
   await setDoc(doc(db, 'users', id), changes, { merge: true });
+}
+
+export async function recordLoginSession() {
+  if (!db || !auth?.currentUser) return;
+  const user = auth.currentUser;
+  const token = await user.getIdTokenResult();
+  const authTime = Number(token.claims.auth_time);
+  const target = doc(db, 'loginSessions', `${user.uid}_${authTime}`);
+  await runTransaction(db, async (tx) => {
+    if ((await tx.get(target)).exists()) return;
+    tx.set(target, {
+      userId: user.uid,
+      email: user.email,
+      authTime,
+      recordedAt: serverTimestamp(),
+    });
+  });
+}
+export type LoginSession = { id: string; userId: string; email: string; authTime: number };
+export function subscribeLoginSessions(
+  update: (rows: LoginSession[]) => void,
+  error: (message: string) => void,
+) {
+  if (!db) return () => {};
+  return onSnapshot(
+    query(collection(db, 'loginSessions'), orderBy('authTime', 'desc'), limit(100)),
+    (snap) => update(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as LoginSession)),
+    (e) => error(e.message),
+  );
 }

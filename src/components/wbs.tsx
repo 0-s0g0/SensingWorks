@@ -1,6 +1,10 @@
 'use client';
+import { downloadCsv, wbsCsv } from '@/lib/csv';
+import { format } from '@/lib/time';
+import { SubtaskEditButton } from './subtask-edit-button';
 import { Fragment, useEffect, useState } from 'react';
 import {
+  Download,
   ChevronDown,
   ChevronRight,
   LockKeyhole,
@@ -20,13 +24,15 @@ import {
 } from '@/lib/domain';
 import { Badge, Empty, Notice, PageHeading, Progress, Modal, Field } from './ui/primitives';
 import { Button } from './ui/button';
-import { MissionPanel, People } from './mission-panel';
+import { AssigneePicker } from './assignee-picker';
+import { MissionPanel } from './mission-panel';
 export function WbsPage() {
   const { state, user, act, busy } = useStore(),
     missions = missionsOf(state),
     phases = state.wbsItems.filter((n) => n.level === 1).sort((a, b) => a.order - b.order);
   const [expanded, setExpanded] = useState<Set<string>>(new Set()),
     [selected, setSelected] = useState<string | null>(null),
+    [scheduleEdit, setScheduleEdit] = useState<WbsItem | null>(null),
     [phaseEdit, setPhaseEdit] = useState<WbsItem | null>(null),
     [message, setMessage] = useState('');
   const [filters, setFilters] = useState({
@@ -99,12 +105,27 @@ export function WbsPage() {
         title="プロジェクトWBS"
         description="工程の構造・担当・進捗を共有し、終了報告と承認までをここで進めます。"
         action={
-          user.role === 'OWNER' && (
-            <Button onClick={() => open('new')} disabled={!phases.length}>
-              <Plus size={16} />
-              中工程を追加
+          <div className="panel-actions">
+            <Button
+              variant="outline"
+              disabled={!state.wbsItems.length}
+              onClick={() =>
+                downloadCsv(
+                  `SensingWorks-WBS-${format(new Date(), 'yyyy-MM-dd')}.csv`,
+                  wbsCsv(state),
+                )
+              }
+            >
+              <Download size={16} />
+              全WBSをCSV出力
             </Button>
-          )
+            {user.role === 'OWNER' && (
+              <Button onClick={() => open('new')} disabled={!phases.length}>
+                <Plus size={16} />
+                中工程を追加
+              </Button>
+            )}
+          </div>
         }
       />
       <div className="panel wbs-overview">
@@ -216,13 +237,20 @@ export function WbsPage() {
       ) : (
         <div className="panel wbs-tree" role="table" aria-label="プロジェクトWBS">
           <div className="wbs-grid wbs-columns" role="row">
-            {['WBS', '工程名', 'ポイント', 'ステータス', '担当', '前提', '進捗', '期限'].map(
-              (c) => (
-                <div role="columnheader" key={c}>
-                  {c}
-                </div>
-              ),
-            )}
+            {[
+              'WBS',
+              '工程名',
+              'ポイント',
+              'ステータス',
+              '担当',
+              '前提',
+              '進捗',
+              '開始日 / 期限',
+            ].map((c) => (
+              <div role="columnheader" key={c}>
+                {c}
+              </div>
+            ))}
           </div>
           {groups.map(({ phase, all, visible }) => {
             const done = all.filter((m) => m.status === 'COMPLETED').length,
@@ -303,7 +331,7 @@ export function WbsPage() {
                             <Badge status={status} />
                           </div>
                           <div role="cell" data-label="担当">
-                            <People item={m} />
+                            <AssigneePicker item={m} />
                           </div>
                           <div role="cell" data-label="前提" className="wbs-prerequisites">
                             {m.dependencyIds.length
@@ -326,8 +354,20 @@ export function WbsPage() {
                               <Progress value={(progress.done / progress.total) * 100} />
                             )}
                           </div>
-                          <div role="cell" data-label="期限">
-                            {m.deadline}
+                          <div role="cell" data-label="開始日 / 期限">
+                            <div title="開始日">
+                              {m.startDate || '未設定'}
+                              {(user.role === 'OWNER' || m.assigneeIds.includes(user.id)) && (
+                                <button
+                                  className="icon-button"
+                                  aria-label={`${m.wbsCode} 開始日を編集`}
+                                  onClick={() => setScheduleEdit(m)}
+                                >
+                                  <Pencil size={12} />
+                                </button>
+                              )}
+                            </div>
+                            <small title="期限">〜 {m.deadline}</small>
                           </div>
                         </div>
                         {expanded.has(m.id) &&
@@ -343,6 +383,7 @@ export function WbsPage() {
                               </div>
                               <div role="cell" className="wbs-step-title">
                                 {c.title}
+                                {editable && <SubtaskEditButton item={c} />}
                               </div>
                               <div role="cell" className="wbs-step-status">
                                 {editable ? (
@@ -382,6 +423,40 @@ export function WbsPage() {
             );
           })}
         </div>
+      )}
+      {scheduleEdit && (
+        <Modal title={`${scheduleEdit.wbsCode} 開始日を編集`} close={() => setScheduleEdit(null)}>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                await act({
+                  type: 'schedule',
+                  payload: {
+                    missionId: scheduleEdit.id,
+                    startDate: new FormData(e.currentTarget).get('startDate'),
+                  },
+                });
+                setScheduleEdit(null);
+                setMessage('開始日を保存しました。');
+              } catch (e) {
+                setMessage((e as Error).message);
+              }
+            }}
+          >
+            <Field label="開始日（任意）">
+              <input
+                name="startDate"
+                type="date"
+                defaultValue={scheduleEdit.startDate ?? ''}
+                max={scheduleEdit.deadline}
+              />
+            </Field>
+            <p>期限：{scheduleEdit.deadline}。空欄にすると未設定に戻せます。</p>
+            <Notice text={message} />
+            <Button disabled={busy}>保存</Button>
+          </form>
+        </Modal>
       )}
       {selected && <MissionPanel key={selected} id={selected} close={close} />}
       {phaseEdit && (

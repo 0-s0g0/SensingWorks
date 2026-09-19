@@ -1,0 +1,26 @@
+import { test, expect } from '@playwright/test';
+test('submitted weekly report colors the Owner matrix and opens read-only content', async ({ page }) => {
+  await page.goto('/reports');
+  await expect(page.getByRole('button', { name: '前の週' })).toBeDisabled();
+  await page.getByLabel('今週うまくいったこと').fill('マトリックス検証用の実施内容');
+  await page.getByLabel('今週悩んだこと').fill('計測ノイズ');
+  await page.getByLabel('来週やること').fill('再計測');
+  await page.getByRole('button', { name: '週報を提出', exact: true }).click();
+  await expect(page.getByText('週報を提出しました。')).toBeVisible();
+  await page.getByLabel('デモユーザー切替').selectOption({ label: '高橋 直樹 / Owner' });
+  await page.getByRole('link', { name: '管理', exact: true }).click();
+  const matrix = page.getByRole('region', { name: '週報マトリックス（横スクロール）' });
+  await expect(matrix.getByRole('columnheader')).toHaveCount(29);
+  const cell = matrix.getByRole('button', { name: '青木 海斗 2026-09-21 提出済み', exact: true });
+  await expect(cell).toHaveClass(/weekly-submitted/);
+  await cell.click();
+  await expect(page.getByRole('dialog')).toContainText('マトリックス検証用の実施内容');
+  await expect(page.getByRole('dialog').getByRole('textbox')).toHaveCount(0);
+  await page.getByRole('button', { name: '閉じる', exact: true }).click();
+  await matrix.getByRole('button', { name: '青木 海斗 2027-03-29 未提出', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('まだ作成されていません');
+  await page.getByRole('button', { name: '閉じる', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'docs/screenshots/weekly-matrix-mobile.png', fullPage: true });
+});

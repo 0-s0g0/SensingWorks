@@ -1,8 +1,13 @@
 'use client';
+import { downloadCsv, weeklyCsv } from '@/lib/csv';
+import { WeeklyMatrix } from './weekly-matrix';
+import { weeklyFields, currentReportWeek, weeklyStart, weeklyEnd } from '@/lib/weekly';
+import { LoginHistory } from './login-history';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
+  Download,
   Radio,
   ChevronDown,
   ChevronRight,
@@ -37,6 +42,7 @@ import { loginGoogle, initializeProject, readAccess, saveAccess, updateUser } fr
 import { Button } from './ui/button';
 import { PageHeading, Avatar, Progress, Badge, Empty, Field, Notice } from './ui/primitives';
 import { WbsPage } from './wbs';
+import { defaultAccess } from '@/lib/access-config';
 import { People } from './mission-panel';
 import { AvailabilityPage } from './availability';
 const nav = [
@@ -285,7 +291,7 @@ function Home() {
     mine = missionsOf(state).filter(
       (m) => m.assigneeIds.includes(user.id) && m.status !== 'COMPLETED',
     ),
-    week = weekOf(),
+    week = currentReportWeek(),
     report = state.weeklyReports.find((r) => r.userId === user.id && r.weekStart === week),
     done = missionsOf(state).filter(
       (m) => m.assigneeIds.includes(user.id) && inWeek(m.completedAt),
@@ -306,6 +312,10 @@ function Home() {
         title={`おかえりなさい、${user.name.split(' ')[0]}さん`}
         description="自分の現在の仕事と、チームの進み具合を確認しましょう。"
       />
+      <p className="muted" aria-label="自分の進捗サマリー">
+        累計 <strong>{earnedPoints(state, user.id)}pt</strong> · 担当中 {mine.length}件 · 今週の完了{' '}
+        {done.length}件
+      </p>
       <div className="section-title">
         <h2>自分の担当ミッション</h2>
         <Link href="/wbs">
@@ -343,16 +353,9 @@ function Home() {
     </>
   );
 }
-const weeklyFields = [
-  ['wentWell', '今週うまくいったこと'],
-  ['challenges', '今週悩んだこと'],
-  ['nextWeek', '来週やること'],
-  ['needHelp', '相談したいこと'],
-  ['mostTimeSpent', '一番時間を使ったこと'],
-] as const;
 function ReportsPage() {
   const { state, user } = useStore(),
-    [week, setWeek] = useState(weekOf()),
+    [week, setWeek] = useState(currentReportWeek),
     [person, setPerson] = useState(user.id);
   const report = state.weeklyReports.find((r) => r.userId === person && r.weekStart === week);
   const done = missionsOf(state).filter(
@@ -368,11 +371,27 @@ function ReportsPage() {
       <PageHeading
         eyebrow="WEEKLY REFLECTION"
         title="週報"
+        action={
+          <Button
+            variant="outline"
+            title="表示中のメンバー・週の保存済み内容を出力します。編集中の内容は先に保存してください。"
+            onClick={() =>
+              downloadCsv(
+                `SensingWorks-weekly-${week}.csv`,
+                weeklyCsv(state, { userId: person, week }),
+              )
+            }
+          >
+            <Download size={16} />
+            保存済み週報をCSV出力
+          </Button>
+        }
         description="週の振り返りをチームで共有します。編集できるのは本人だけです。"
       />
       <div className="filter-panel report-filters">
         <Button
           variant="outline"
+          disabled={week <= weeklyStart}
           onClick={() => setWeek(format(addWeeks(jstDate(week), -1), 'yyyy-MM-dd'))}
         >
           前の週
@@ -382,6 +401,7 @@ function ReportsPage() {
         </strong>
         <Button
           variant="outline"
+          disabled={week >= weeklyEnd}
           onClick={() => setWeek(format(addWeeks(jstDate(week), 1), 'yyyy-MM-dd'))}
         >
           次の週
@@ -452,7 +472,8 @@ function ReportsPage() {
 }
 function WeeklyEditor({ week, report }: { week: string; report?: WeeklyReport }) {
   const { act, busy, user } = useStore(),
-    [message, setMessage] = useState('');
+    [message, setMessage] = useState(''),
+    [errors, setErrors] = useState<string[]>([]);
   return (
     <form
       onSubmit={async (e) => {
@@ -463,6 +484,19 @@ function WeeklyEditor({ week, report }: { week: string; report?: WeeklyReport })
           const fields = Object.fromEntries(
             weeklyFields.map(([k]) => [k, String(f.get(k) ?? '')]),
           ) as Pick<WeeklyReport, (typeof weeklyFields)[number][0]>;
+          const missing = submit
+            ? weeklyFields
+                .slice(0, 3)
+                .filter(([k]) => !fields[k].trim())
+                .map(([k]) => k)
+            : [];
+          setErrors(missing);
+          if (missing.length) {
+            setMessage('必須の3項目を入力してください。');
+            const input = e.currentTarget.elements.namedItem(missing[0]) as HTMLTextAreaElement;
+            input.focus();
+            return;
+          }
           await act({
             type: 'report',
             payload: {
@@ -483,11 +517,37 @@ function WeeklyEditor({ week, report }: { week: string; report?: WeeklyReport })
       }}
     >
       <h2>自分の週報</h2>
+      <p>締切：{format(week, 'yyyy/MM/dd')}（月）23:59（日本時間）。締切後も提出・修正できます。</p>
       <p>{report?.status === 'SUBMITTED' ? '提出済み' : report ? '下書き保存済み' : '未提出'}</p>
       {weeklyFields.map(([key, label], i) => (
-        <Field key={key} label={`${label}${i < 3 ? '（提出時必須）' : ''}`}>
-          <textarea name={key} defaultValue={report?.[key] ?? ''} rows={4} />
-        </Field>
+        <label className="field" key={key}>
+          <span>
+            {label}
+            {i < 3 && (
+              <span className="required-mark" aria-hidden="true">
+                {' '}
+                ＊
+              </span>
+            )}
+          </span>
+          <textarea
+            name={key}
+            aria-label={label}
+            aria-required={i < 3}
+            aria-invalid={errors.includes(key)}
+            aria-describedby={errors.includes(key) ? `weekly-error-${key}` : undefined}
+            defaultValue={report?.[key] ?? ''}
+            rows={4}
+            onChange={(e) => {
+              if (e.target.value.trim()) setErrors((old) => old.filter((k) => k !== key));
+            }}
+          />
+          {errors.includes(key) && (
+            <span id={`weekly-error-${key}`} className="field-error" role="alert">
+              {label}を入力してください。
+            </span>
+          )}
+        </label>
       ))}
       <Notice text={message} />
       <div className="panel-actions">
@@ -576,7 +636,7 @@ function ProfilePage() {
 function AdminPage() {
   const { state, user, demo, act, busy } = useStore(),
     [message, setMessage] = useState(''),
-    [domains, setDomains] = useState(''),
+    [domains, setDomains] = useState(defaultAccess.allowedDomains.join('\n')),
     [emails, setEmails] = useState('');
   useEffect(() => {
     if (!demo)
@@ -598,10 +658,14 @@ function AdminPage() {
         description="終了報告のレビュー、内部報酬、利用アカウントを管理します。"
       />
       <Notice text={message} />
-      {!state.wbsItems.length && (
+      <WeeklyMatrix />
+      <LoginHistory />
+      {missionsOf(state).length < 24 && (
         <section className="panel detail-section">
           <h2>プロジェクトの初期設定</h2>
-          <p>8大工程と24中工程のたたき台を登録します。架空の実績・ユーザー・完了は登録しません。</p>
+          <p>
+            8大工程と24中工程のたたき台を登録します。既存の工程は保持し、未登録分のみ追加します。架空の実績は登録しません。
+          </p>
           <Button
             disabled={busy || demo}
             onClick={() =>

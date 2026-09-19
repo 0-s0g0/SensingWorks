@@ -11,6 +11,7 @@ import {
   db,
   firebaseConfigured,
   ensureProfile,
+  recordLoginSession,
   subscribeWorkspace,
   subscribeAvailability,
   saveAction,
@@ -86,6 +87,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setUserId(fbUser.uid);
       try {
         await ensureProfile();
+        await recordLoginSession();
         if (current !== generation) return;
         unprofile = onSnapshot(
           doc(db!, 'users', fbUser.uid),

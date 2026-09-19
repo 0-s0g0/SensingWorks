@@ -3,7 +3,9 @@ test('WBS hierarchy, filters, shared reference progress and point display', asyn
   await page.goto('/wbs');
   await page.getByRole('button', { name: 'すべて展開', exact: true }).click();
   await expect(page.getByTestId('mission-2.2')).toContainText('100pt');
-  await expect(page.getByTestId('mission-2.2')).toContainText('田中 美咲');
+  await expect(
+    page.getByTestId('mission-2.2').getByRole('img', { name: '田中 美咲' }),
+  ).toBeVisible();
   await expect(page.getByTestId('mission-4.1')).toContainText('ロック中');
   await page.getByLabel('2.2.2 ステータス', { exact: true }).selectOption('COMPLETED');
   await expect(page.getByTestId('mission-2.2')).toContainText('小工程 2 / 3');
@@ -16,7 +18,9 @@ test('WBS hierarchy, filters, shared reference progress and point display', asyn
   await expect(page.getByTestId('mission-2.1')).toHaveCount(0);
   await page.getByRole('button', { name: 'ESP32複数台同時取得', exact: true }).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByLabel('2.2.2 実装・計測を行う')).toBeChecked();
+  await expect(
+    page.getByRole('dialog').getByRole('checkbox', { name: '実装・計測を行う', exact: true }),
+  ).toBeChecked();
 });
 test('Owner assigns six people maximum and edits phase and WBS without a mission route', async ({
   page,
@@ -37,7 +41,9 @@ test('Owner assigns six people maximum and edits phase and WBS without a mission
   await page.getByRole('button', { name: '中工程を保存', exact: true }).click();
   await page.getByRole('button', { name: 'すべて展開', exact: true }).click();
   await expect(page.getByTestId('mission-1.4')).toContainText('60pt');
-  await expect(page.getByTestId('mission-1.4')).toContainText('田中 美咲');
+  await expect(
+    page.getByTestId('mission-1.4').getByRole('img', { name: '田中 美咲' }),
+  ).toBeVisible();
 });
 test('desktop and phone screenshots keep hierarchy with no overflow', async ({ page }) => {
   const errors: string[] = [];
@@ -63,4 +69,52 @@ test('desktop and phone screenshots keep hierarchy with no overflow', async ({ p
   await page.screenshot({ path: 'docs/screenshots/firebase-home-mobile.png', fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
+});
+
+test('Team changes another mission assignees through avatars and Owner sees session management', async ({
+  page,
+}) => {
+  await page.goto('/wbs');
+  await page.getByRole('button', { name: 'すべて展開', exact: true }).click();
+  await page.getByRole('button', { name: '2.3 担当者を変更', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('checkbox', { name: '青木 海斗', exact: true }).uncheck();
+  await dialog.getByRole('checkbox', { name: '佐藤 蓮', exact: true }).check();
+  await dialog.getByRole('button', { name: '担当者を保存' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId('mission-2.3').getByRole('img', { name: '佐藤 蓮' })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'すべて展開', exact: true }).click();
+  await expect(page.getByTestId('mission-2.3').getByRole('img', { name: '佐藤 蓮' })).toBeVisible();
+  await page.getByLabel('デモユーザー切替').selectOption({ label: '高橋 直樹 / Owner' });
+  await page.getByRole('link', { name: '管理', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'セッション管理・ログイン履歴' })).toBeVisible();
+});
+
+test('assigned Team can rename, add and delete reference steps without losing other progress', async ({ page }) => {
+  await page.goto('/wbs');
+  await page.getByRole('button', { name: 'すべて展開', exact: true }).click();
+  await page.getByRole('button', { name: '2.2.2 小工程を編集', exact: true }).click();
+  await page.getByLabel('小工程名', { exact: true }).fill('計測条件を調整する');
+  await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByTestId('step-2.2.2')).toContainText('計測条件を調整する');
+  await page.getByRole('button', { name: 'ESP32複数台同時取得', exact: true }).first().click();
+  await page.getByPlaceholder('新しい小工程を追加...').fill('追加の検証');
+  await page.getByRole('dialog').getByRole('button', { name: '追加', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('checkbox', { name: '追加の検証', exact: true })).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: '削除', exact: true }).last().click();
+  await expect(page.getByRole('dialog').getByRole('checkbox', { name: '追加の検証', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByRole('checkbox', { name: '環境・機材を確認する', exact: true })).toBeChecked();
+});
+
+test('start date saves from WBS and remains after reload', async ({ page }) => {
+  await page.goto('/wbs');
+  await page.getByRole('button', { name: 'すべて展開', exact: true }).click();
+  await page.getByRole('button', { name: '2.2 開始日を編集', exact: true }).click();
+  await page.getByLabel('開始日（任意）', { exact: true }).fill('2026-09-21');
+  await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+  await expect(page.getByTestId('mission-2.2')).toContainText('2026-09-21');
+  await page.reload();
+  await page.getByRole('button', { name: 'すべて展開', exact: true }).click();
+  await expect(page.getByTestId('mission-2.2')).toContainText('2026-09-21');
 });
