@@ -1,0 +1,166 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signed() { return request.auth != null && request.auth.token.email_verified == true && request.auth.token.firebase.sign_in_provider == 'google.com'; }
+  function member() { return signed() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true; }
+  function owner() { return member() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'OWNER'; }
+  function userAllowed() {
+   let c = get(/databases/$(database)/documents/settings/access).data;
+   let email = request.auth.token.email.lower();
+   return signed() && (email in c.allowedEmails || email.split('@')[1] in c.allowedDomains);
+  }
+  function validInt(n) { return n is int && n >= 0 && n <= 100000000; }
+  function nonEmpty(s) { return s is string && s.size() > 0 && s.size() <= 20000; }
+  function url(s) { return s is string && (s == '' || s.matches('https?://[^\\s]+')); }
+  function m(id) { return get(/databases/$(database)/documents/wbsItems/$(id)).data; }
+  function ma(id) { return getAfter(/databases/$(database)/documents/wbsItems/$(id)).data; }
+  function assigned(item) { return request.auth.uid in item.assigneeIds; }
+  function amountAt(values, ids, n) { return ids.size() > n ? values[ids[n]] : 0; }
+  function sum(values, ids) { return amountAt(values,ids,0)+amountAt(values,ids,1)+amountAt(values,ids,2)+amountAt(values,ids,3)+amountAt(values,ids,4)+amountAt(values,ids,5); }
+  function intAt(values,ids,n) { return ids.size() <= n || validInt(values[ids[n]]); }
+  function allocation(values,ids,total) {
+   return values is map && ids.size() > 0 && ids.size() <= 6 && values.keys().toSet() == ids.toSet()
+    && intAt(values,ids,0) && intAt(values,ids,1) && intAt(values,ids,2) && intAt(values,ids,3) && intAt(values,ids,4) && intAt(values,ids,5) && sum(values,ids)==total;
+  }
+  function depValid(d,n) { return d.dependencyIds.size() <= n || (m(d.dependencyIds[n]).level == 2 && m(d.dependencyIds[n]).projectId==d.projectId && m(d.dependencyIds[n]).order < d.order); }
+  function depDone(d,n) { return d.dependencyIds.size() <= n || m(d.dependencyIds[n]).status == 'COMPLETED'; }
+  function unlocked(d) { return depDone(d,0)&&depDone(d,1)&&depDone(d,2)&&depDone(d,3)&&depDone(d,4)&&depDone(d,5); }
+  function assigneeValid(ids,n) { return ids.size() <= n || get(/databases/$(database)/documents/users/$(ids[n])).data.active == true; }
+  function basicWbs(d) {
+   return d.keys().hasOnly(['projectId','parentId','wbsCode','level','title','description','pointValue','status','deadline','assigneeIds','primaryId','dependencyIds','autoUnlock','order','completedAt','approvedBy','finalPoints'])
+    && d.projectId == 'wifi-poc' && d.level in [1,2,3] && nonEmpty(d.title) && d.description is string && d.description.size() <= 20000
+    && d.wbsCode is string && d.order is number && d.deadline is string && d.deadline.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+    && d.autoUnlock is bool && d.assigneeIds is list && d.assigneeIds.size() <= 6 && d.assigneeIds.toSet().size() == d.assigneeIds.size()
+    && d.dependencyIds is list && d.dependencyIds.size() <= 6 && d.dependencyIds.toSet().size() == d.dependencyIds.size()
+    && validInt(d.pointValue) && (d.level == 2 ? d.pointValue > 0 : d.pointValue == 0)
+    && d.status in ['LOCKED','OPEN','ASSIGNED','IN_PROGRESS','REPORT_SUBMITTED','REVIEW','REVISION','COMPLETED','ON_HOLD'];
+  }
+  function configurable(d) {
+   return d.status in ['OPEN','LOCKED','ASSIGNED','ON_HOLD'] && d.completedAt==null && d.approvedBy==null && d.finalPoints=={}
+    && (d.assigneeIds.size()==0 ? d.primaryId==null : d.primaryId in d.assigneeIds)
+    && depValid(d,0)&&depValid(d,1)&&depValid(d,2)&&depValid(d,3)&&depValid(d,4)&&depValid(d,5);
+  }
+  function hasAward(id,d,n) {
+   let uid = d.assigneeIds.size()>n ? d.assigneeIds[n] : '_unused';
+   let target = /databases/$(database)/documents/pointAwards/$(id+'_'+uid);
+   let award = d.assigneeIds.size()>n ? getAfter(target).data : null;
+   return d.assigneeIds.size()<=n || (award.points==d.finalPoints[uid] && award.approvedBy==request.auth.uid && award.awardedAt==d.completedAt);
+  }
+  function approval(id,d) {
+   return d.status=='COMPLETED' && d.approvedBy==request.auth.uid && nonEmpty(d.completedAt)
+    && allocation(d.finalPoints,d.assigneeIds,d.pointValue)
+    && getAfter(/databases/$(database)/documents/completionReports/$(id)).data.status=='APPROVED'
+    && hasAward(id,d,0)&&hasAward(id,d,1)&&hasAward(id,d,2)&&hasAward(id,d,3)&&hasAward(id,d,4)&&hasAward(id,d,5);
+  }
+  match /users/{id} {
+   allow get: if signed() && (id==request.auth.uid || member());
+   allow list: if member();
+   allow create: if signed() && id==request.auth.uid && userAllowed() && request.resource.data.keys().hasOnly(['name','role','active']) && nonEmpty(request.resource.data.name) && request.resource.data.role=='TEAM' && request.resource.data.active==true;
+   allow update: if owner() && request.resource.data.keys().hasOnly(['name','role','active']) && nonEmpty(request.resource.data.name) && request.resource.data.role in ['TEAM','OWNER'] && request.resource.data.active is bool && (id!=request.auth.uid || (request.resource.data.role=='OWNER' && request.resource.data.active));
+   allow delete: if false;
+  }
+  match /settings/access {
+   allow read: if owner();
+   allow write: if owner() && request.resource.data.keys().hasOnly(['allowedDomains','allowedEmails']) && request.resource.data.allowedDomains is list && request.resource.data.allowedEmails is list;
+  }
+  match /projects/{id} {
+   allow read: if member();
+   allow write: if owner() && id=='wifi-poc' && request.resource.data.keys().hasOnly(['name','startDate','endDate']) && nonEmpty(request.resource.data.name);
+  }
+  function phaseUpdate() { return owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title']) && nonEmpty(request.resource.data.title); }
+  function stepUpdate() {
+   let changes=request.resource.data.diff(resource.data).affectedKeys();
+   let parent=m(resource.data.parentId);
+   return (changes.hasOnly(['status']) && request.resource.data.status in ['OPEN','IN_PROGRESS','COMPLETED','ON_HOLD'] && (owner() || (assigned(parent) && unlocked(parent) && (parent.status!='LOCKED' || parent.autoUnlock))))
+    || (owner() && changes.hasOnly(['title','description','deadline','autoUnlock']) && nonEmpty(request.resource.data.title));
+  }
+  function missionUpdate(id) {
+   let old=resource.data;
+   let d=request.resource.data;
+   let changes=d.diff(old).affectedKeys();
+   return old.status in ['REPORT_SUBMITTED','REVIEW'] ?
+    (owner() && ((changes.hasOnly(['status']) && (d.status=='REVIEW' || (d.status=='REVISION' && getAfter(/databases/$(database)/documents/completionReports/$(id)).data.status=='REVISION'))) || (changes.hasOnly(['status','completedAt','approvedBy','finalPoints']) && approval(id,d)))) :
+    ((changes.hasOnly(['status']) && assigned(old) && unlocked(old) && ((d.status=='IN_PROGRESS' && (old.status=='ASSIGNED' || (old.status=='LOCKED' && old.autoUnlock))) || (old.status in ['IN_PROGRESS','REVISION'] && d.status=='REPORT_SUBMITTED' && getAfter(/databases/$(database)/documents/completionReports/$(id)).data.status=='SUBMITTED')))
+     || (owner() && old.status in ['OPEN','LOCKED','ASSIGNED','ON_HOLD'] && basicWbs(d) && d.level==2 && d.wbsCode==old.wbsCode && d.order==old.order && configurable(d) && ma(d.parentId).level==1));
+  }
+  match /wbsItems/{id} {
+   allow read: if member();
+   allow create: if owner() && basicWbs(request.resource.data) && (
+    (request.resource.data.level==1 && request.resource.data.parentId==null && request.resource.data.pointValue==0 && request.resource.data.assigneeIds==[] && request.resource.data.dependencyIds==[] && request.resource.data.finalPoints=={}) ||
+    (request.resource.data.level==2 && ma(request.resource.data.parentId).level==1 && configurable(request.resource.data)) ||
+    (request.resource.data.level==3 && ma(request.resource.data.parentId).level==2 && request.resource.data.assigneeIds==[] && request.resource.data.dependencyIds==[] && request.resource.data.status=='OPEN' && request.resource.data.finalPoints=={})
+   );
+   allow update: if member() && (resource.data.level == 1 ? phaseUpdate() : resource.data.level == 3 ? stepUpdate() : missionUpdate(id));
+   allow delete: if owner() && resource.data.level==3 && m(resource.data.parentId).status in ['OPEN','LOCKED','ASSIGNED','ON_HOLD'];
+  }
+  match /taskAssignments/{id} {
+   allow read: if member();
+   allow create, update: if owner() && request.resource.data.keys().hasOnly(['missionId','userId','isPrimary','assignedAt']) && id==request.resource.data.missionId+'_'+request.resource.data.userId && request.resource.data.userId in ma(request.resource.data.missionId).assigneeIds && request.resource.data.isPrimary==(ma(request.resource.data.missionId).primaryId==request.resource.data.userId);
+   allow delete: if owner() && !(resource.data.userId in ma(resource.data.missionId).assigneeIds);
+  }
+  match /taskDependencies/{id} {
+   allow read: if member();
+   allow create, update: if owner() && request.resource.data.keys().hasOnly(['missionId','dependsOnId']) && id==request.resource.data.missionId+'_'+request.resource.data.dependsOnId && request.resource.data.dependsOnId in ma(request.resource.data.missionId).dependencyIds;
+   allow delete: if owner() && !(resource.data.dependsOnId in ma(resource.data.missionId).dependencyIds);
+  }
+  match /taskApplications/{id} { allow read, write: if false; }
+  function attachmentAt(files,n) { return files.size()<=n || (files[n].keys().hasOnly(['name','url','path']) && nonEmpty(files[n].name) && url(files[n].url) && files[n].path is string && (files[n].url!='' || files[n].path.matches('attachments/[^/]+/[^/]+/[^/]+'))); }
+  function reportValid(d,id) {
+   return d.keys().hasOnly(['missionId','workSummary','result','wentWell','didNotGoWell','findings','remainingIssues','handoverNotes','workHours','githubUrl','externalUrl','attachments','contributionShares','status','submittedAt','updatedAt','updatedBy','version','reviewComment'])
+    && d.missionId==id && d.updatedBy==request.auth.uid && d.version is int && d.workHours is number && d.workHours>=0 && d.workHours<=100000
+    && d.workSummary is string && d.result is string && d.wentWell is string && d.didNotGoWell is string && d.findings is string && d.remainingIssues is string && d.handoverNotes is string
+    && url(d.githubUrl)&&url(d.externalUrl) && d.attachments is list && d.attachments.size()<=10
+    && attachmentAt(d.attachments,0)&&attachmentAt(d.attachments,1)&&attachmentAt(d.attachments,2)&&attachmentAt(d.attachments,3)&&attachmentAt(d.attachments,4)&&attachmentAt(d.attachments,5)&&attachmentAt(d.attachments,6)&&attachmentAt(d.attachments,7)&&attachmentAt(d.attachments,8)&&attachmentAt(d.attachments,9);
+  }
+  function teamReport(d,id) {
+   let parent=m(id);
+   return assigned(parent) && parent.status in ['IN_PROGRESS','REVISION'] && unlocked(parent) && d.status in ['DRAFT','SUBMITTED']
+    && (d.status=='DRAFT' || (nonEmpty(d.workSummary)&&nonEmpty(d.result)&&nonEmpty(d.submittedAt)&&allocation(d.contributionShares,parent.assigneeIds,100)&&ma(id).status=='REPORT_SUBMITTED'));
+  }
+  match /completionReports/{id} {
+   allow read: if member();
+   allow create: if member() && reportValid(request.resource.data,id) && request.resource.data.version==1 && request.resource.data.reviewComment=='' && teamReport(request.resource.data,id);
+   allow update: if member() && request.resource.data.version==resource.data.version+1 && (
+    (resource.data.status in ['DRAFT','REVISION'] && reportValid(request.resource.data,id) && request.resource.data.reviewComment==resource.data.reviewComment && teamReport(request.resource.data,id)) ||
+    (owner() && resource.data.status=='SUBMITTED' && request.resource.data.updatedBy==request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','reviewComment','version','updatedAt','updatedBy']) && ((request.resource.data.status=='REVISION' && nonEmpty(request.resource.data.reviewComment) && ma(id).status=='REVISION') || (request.resource.data.status=='APPROVED' && ma(id).status=='COMPLETED')))
+   );
+   allow delete: if false;
+  }
+  function awardValid(id) {
+   let d=request.resource.data;
+   let parent=ma(d.missionId);
+   return d.keys().hasOnly(['missionId','userId','points','awardedAt','approvedBy']) && id==d.missionId+'_'+d.userId && validInt(d.points) && d.approvedBy==request.auth.uid && parent.status=='COMPLETED' && d.userId in parent.assigneeIds && d.points==parent.finalPoints[d.userId] && d.awardedAt==parent.completedAt;
+  }
+  match /pointAwards/{id} {
+   allow read: if member();
+   allow create: if owner() && awardValid(id);
+   allow update,delete: if false;
+  }
+  match /rewardPrivate/{id} {
+   allow read: if owner();
+   allow create,update: if owner() && request.resource.data.keys().hasOnly(['missionId','totalAmount','allocations','approvedAt','approvedBy','paymentStatus']) && request.resource.data.missionId==id && validInt(request.resource.data.totalAmount) && ma(id).level==2 && (
+    (request.resource.data.paymentStatus=='DRAFT' && ma(id).status!='COMPLETED' && request.resource.data.allocations=={} && request.resource.data.approvedAt==null && request.resource.data.approvedBy==null) ||
+    (request.resource.data.paymentStatus in ['APPROVED','PAID'] && ma(id).status=='COMPLETED' && request.resource.data.approvedBy==ma(id).approvedBy && request.resource.data.approvedAt==ma(id).completedAt && allocation(request.resource.data.allocations,ma(id).assigneeIds,request.resource.data.totalAmount))
+   );
+   allow delete: if false;
+  }
+  match /weeklyReports/{id} {
+   allow read: if member();
+   allow create,update: if member() && request.resource.data.keys().hasOnly(['userId','weekStart','wentWell','challenges','nextWeek','needHelp','mostTimeSpent','status','updatedAt']) && request.resource.data.userId==request.auth.uid && id==request.auth.uid+'_'+request.resource.data.weekStart
+    && request.resource.data.weekStart.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}') && request.resource.data.status in ['DRAFT','SUBMITTED'] && (request.resource.data.status=='DRAFT' || (nonEmpty(request.resource.data.wentWell)&&nonEmpty(request.resource.data.challenges)&&nonEmpty(request.resource.data.nextWeek)));
+   allow delete: if member() && resource.data.userId==request.auth.uid;
+  }
+  match /availability/{id} {
+   allow read: if member();
+   allow create,update: if member() && request.resource.data.keys().hasOnly(['userId','date','hour','status']) && (request.resource.data.userId==request.auth.uid || owner()) && id==request.resource.data.userId+'_'+request.resource.data.date+'_'+string(request.resource.data.hour)
+    && request.resource.data.date>='2026-09-01' && request.resource.data.date<='2027-03-31' && request.resource.data.hour is int && request.resource.data.hour>=9 && request.resource.data.hour<=22 && request.resource.data.status in ['AVAILABLE','MAYBE','UNAVAILABLE'];
+   allow delete: if member() && (resource.data.userId==request.auth.uid || owner());
+  }
+  match /activityLogs/{id} {
+   allow read: if member();
+   allow create: if member() && request.resource.data.keys().hasOnly(['userId','action','createdAt']) && request.resource.data.userId==request.auth.uid && request.resource.data.action in ['中工程を保存','大工程名を更新','参考小工程を更新','中工程を開始','終了報告を保存','終了報告をレビュー','週報を保存','MID.予定を更新','支払済みを記録'];
+   allow update,delete: if false;
+  }
+  match /{document=**} { allow read,write: if false; }
+ }
+}
