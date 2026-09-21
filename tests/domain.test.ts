@@ -238,3 +238,13 @@ it('start dates are optional, editable by assignees and cannot exceed deadlines'
   for (const date of ['2027-04-01', '2027-02-30']) expect(() => transition(s, { type: 'schedule', payload: { missionId: 'mission-2-2', startDate: date } }, actor)).toThrow();
   expect(transition(next, { type: 'schedule', payload: { missionId: 'mission-2-2', startDate: '' } }, actor).wbsItems.find((m) => m.id === 'mission-2-2')?.startDate).toBe('');
 });
+
+it('management-only Admin manages work but cannot be assigned or submit weekly reports', () => {
+  const s = createSeed();
+  const admin = { id: 'admin', name: '管理専用', role: 'ADMIN' as const, active: true };
+  s.users.push(admin);
+  expect(transition(s, { type: 'phase', payload: { id: 'phase-1', title: 'Admin edit' } }, admin).wbsItems.find((w) => w.id === 'phase-1')?.title).toBe('Admin edit');
+  expect(() => transition(s, { type: 'assignment', payload: { missionId: 'mission-2-2', assigneeIds: [admin.id], primaryId: admin.id } }, admin)).toThrow();
+  expect(() => transition(s, { type: 'report', payload: {} }, admin)).toThrow();
+  expect(() => transition(s, { type: 'availability', payload: { userId: admin.id, cells: [] } }, admin)).toThrow();
+});

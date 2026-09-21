@@ -1,10 +1,21 @@
 'use client';
+import { canManage } from '@/lib/domain';
+import { isParticipant } from '@/lib/domain';
 import { downloadCsv, availabilityCsv } from '@/lib/csv';
 import { useState, useRef, useEffect } from 'react';
 import { addDays, addWeeks, startOfWeek } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { format, jstDate } from '@/lib/time';
-import { Download, Check, ChevronLeft, ChevronRight, MousePointer2, Save, Users, X } from 'lucide-react';
+import {
+  Download,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  MousePointer2,
+  Save,
+  Users,
+  X,
+} from 'lucide-react';
 import { useStore } from '@/lib/store';
 import { AvailabilityStatus, weekOf } from '@/lib/domain';
 import { Button } from './ui/button';
@@ -20,9 +31,9 @@ export function AvailabilityPage() {
   const { state, user, act, busy, setAvailabilityWeek } = useStore();
   const [target, setTarget] = useState('team');
   const [editing, setEditing] = useState(false);
-  const members = state.users.filter((u) => u.active);
+  const members = state.users.filter((u) => u.active && isParticipant(u));
   const admin = target === 'team';
-  const editable = editing && !admin && (target === user.id || user.role === 'OWNER');
+  const editable = editing && !admin && (target === user.id || canManage(user));
   const initial = weekOf(
     new Date() < new Date('2026-09-01')
       ? new Date('2026-09-01')
@@ -146,21 +157,23 @@ export function AvailabilityPage() {
               </>
             ) : (
               <>
-                {user.role === 'OWNER' && !admin && target !== user.id && (
+                {canManage(user) && !admin && target !== user.id && (
                   <Button variant="outline" onClick={() => setEditing(true)}>
                     表示中の予定を編集
                   </Button>
                 )}
-                <Button
-                  onClick={() => {
-                    setTarget(user.id);
-                    setEditing(true);
-                    setMessage('');
-                    setMode('AVAILABLE');
-                  }}
-                >
-                  予定を入力
-                </Button>
+                {isParticipant(user) && (
+                  <Button
+                    onClick={() => {
+                      setTarget(user.id);
+                      setEditing(true);
+                      setMessage('');
+                      setMode('AVAILABLE');
+                    }}
+                  >
+                    予定を入力
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -177,7 +190,7 @@ export function AvailabilityPage() {
             }}
           >
             <option value="team">チーム全体（参加可能人数）</option>
-            {state.users.map((u) => (
+            {state.users.filter(isParticipant).map((u) => (
               <option key={u.id} value={u.id}>
                 {u.name}
                 {u.id === user.id ? '（自分）' : ''}

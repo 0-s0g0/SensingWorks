@@ -3,7 +3,7 @@ service cloud.firestore {
  match /databases/{database}/documents {
   function signed() { return request.auth != null && request.auth.token.email_verified == true && request.auth.token.firebase.sign_in_provider == 'google.com'; }
   function member() { return signed() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true; }
-  function owner() { return member() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'OWNER'; }
+  function owner() { return member() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['OWNER','ADMIN']; }
   function userAllowed() {
    let c = exists(/databases/$(database)/documents/settings/access) ? get(/databases/$(database)/documents/settings/access).data : {'allowedDomains':['0-s0g0.com'], 'allowedEmails':[]};
    let email = request.auth.token.email.lower();
@@ -25,7 +25,7 @@ service cloud.firestore {
   function depValid(d,n) { return d.dependencyIds.size() <= n || (m(d.dependencyIds[n]).level == 2 && m(d.dependencyIds[n]).projectId==d.projectId && m(d.dependencyIds[n]).order < d.order); }
   function depDone(d,n) { return d.dependencyIds.size() <= n || m(d.dependencyIds[n]).status == 'COMPLETED'; }
   function unlocked(d) { return depDone(d,0)&&depDone(d,1)&&depDone(d,2)&&depDone(d,3)&&depDone(d,4)&&depDone(d,5); }
-  function assigneeValid(ids,n) { return ids.size() <= n || get(/databases/$(database)/documents/users/$(ids[n])).data.active == true; }
+  function assigneeValid(ids,n) { return ids.size() <= n || (get(/databases/$(database)/documents/users/$(ids[n])).data.active == true && get(/databases/$(database)/documents/users/$(ids[n])).data.role != 'ADMIN'); }
   function validStart(d) {
    return !('startDate' in d) || (d.startDate is string && (d.startDate=='' || (d.startDate.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') && d.startDate<=d.deadline)));
   }
@@ -44,12 +44,13 @@ service cloud.firestore {
   function configurable(d) {
    return d.status in ['OPEN','LOCKED','ASSIGNED','ON_HOLD'] && d.completedAt==null && d.approvedBy==null && d.finalPoints=={}
     && (d.assigneeIds.size()==0 ? d.primaryId==null : d.primaryId in d.assigneeIds)
+    && assigneeValid(d.assigneeIds,0)&&assigneeValid(d.assigneeIds,1)&&assigneeValid(d.assigneeIds,2)&&assigneeValid(d.assigneeIds,3)&&assigneeValid(d.assigneeIds,4)&&assigneeValid(d.assigneeIds,5)
     && depValid(d,0)&&depValid(d,1)&&depValid(d,2)&&depValid(d,3)&&depValid(d,4)&&depValid(d,5);
   }
   function hasAward(id,d,n) {
    let uid = d.assigneeIds.size()>n ? d.assigneeIds[n] : '_unused';
    let target = /databases/$(database)/documents/pointAwards/$(id+'_'+uid);
-   let award = d.assigneeIds.size()>n ? getAfter(target).data : null;
+   let award = d.assigneeIds.size()>n ? getAfter(target).data : {};
    return d.assigneeIds.size()<=n || (award.points==d.finalPoints[uid] && award.approvedBy==request.auth.uid && award.awardedAt==d.completedAt);
   }
   function approval(id,d) {
@@ -62,7 +63,7 @@ service cloud.firestore {
    allow get: if signed() && (id==request.auth.uid || member());
    allow list: if member();
    allow create: if signed() && id==request.auth.uid && userAllowed() && request.resource.data.keys().hasOnly(['name','role','active']) && nonEmpty(request.resource.data.name) && request.resource.data.role=='TEAM' && request.resource.data.active==true;
-   allow update: if owner() && request.resource.data.keys().hasOnly(['name','role','active']) && nonEmpty(request.resource.data.name) && request.resource.data.role in ['TEAM','OWNER'] && request.resource.data.active is bool && (id!=request.auth.uid || (request.resource.data.role=='OWNER' && request.resource.data.active));
+   allow update: if owner() && request.resource.data.keys().hasOnly(['name','role','active']) && nonEmpty(request.resource.data.name) && request.resource.data.role in ['TEAM','OWNER','ADMIN'] && request.resource.data.active is bool && (id!=request.auth.uid || (request.resource.data.role in ['OWNER','ADMIN'] && request.resource.data.active));
    allow delete: if false;
   }
   match /loginSessions/{id} {
@@ -129,7 +130,7 @@ service cloud.firestore {
   }
   match /taskAssignments/{id} {
    allow read: if member();
-   allow create, update: if member() && request.resource.data.keys().hasOnly(['missionId','userId','isPrimary','assignedAt']) && id==request.resource.data.missionId+'_'+request.resource.data.userId && request.resource.data.userId in ma(request.resource.data.missionId).assigneeIds && request.resource.data.isPrimary==(ma(request.resource.data.missionId).primaryId==request.resource.data.userId);
+   allow create, update: if member() && get(/databases/$(database)/documents/users/$(request.resource.data.userId)).data.role!='ADMIN' && request.resource.data.keys().hasOnly(['missionId','userId','isPrimary','assignedAt']) && id==request.resource.data.missionId+'_'+request.resource.data.userId && request.resource.data.userId in ma(request.resource.data.missionId).assigneeIds && request.resource.data.isPrimary==(ma(request.resource.data.missionId).primaryId==request.resource.data.userId);
    allow delete: if member() && !(resource.data.userId in ma(resource.data.missionId).assigneeIds);
   }
   match /taskDependencies/{id} {
@@ -180,13 +181,13 @@ service cloud.firestore {
   }
   match /weeklyReports/{id} {
    allow read: if member();
-   allow create,update: if member() && request.resource.data.keys().hasOnly(['userId','weekStart','wentWell','challenges','nextWeek','needHelp','mostTimeSpent','status','updatedAt']) && request.resource.data.userId==request.auth.uid && id==request.auth.uid+'_'+request.resource.data.weekStart
+   allow create,update: if member() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role!='ADMIN' && request.resource.data.keys().hasOnly(['userId','weekStart','wentWell','challenges','nextWeek','needHelp','mostTimeSpent','status','updatedAt']) && request.resource.data.userId==request.auth.uid && id==request.auth.uid+'_'+request.resource.data.weekStart
     && request.resource.data.weekStart.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}') && request.resource.data.status in ['DRAFT','SUBMITTED'] && (request.resource.data.status=='DRAFT' || (nonEmpty(request.resource.data.wentWell)&&nonEmpty(request.resource.data.challenges)&&nonEmpty(request.resource.data.nextWeek)));
    allow delete: if member() && resource.data.userId==request.auth.uid;
   }
   match /availability/{id} {
    allow read: if member();
-   allow create,update: if member() && request.resource.data.keys().hasOnly(['userId','date','hour','status']) && (request.resource.data.userId==request.auth.uid || owner()) && id==request.resource.data.userId+'_'+request.resource.data.date+'_'+string(request.resource.data.hour)
+   allow create,update: if member() && get(/databases/$(database)/documents/users/$(request.resource.data.userId)).data.role!='ADMIN' && request.resource.data.keys().hasOnly(['userId','date','hour','status']) && (request.resource.data.userId==request.auth.uid || owner()) && id==request.resource.data.userId+'_'+request.resource.data.date+'_'+string(request.resource.data.hour)
     && request.resource.data.date>='2026-09-01' && request.resource.data.date<='2027-03-31' && request.resource.data.hour is int && request.resource.data.hour>=9 && request.resource.data.hour<=22 && request.resource.data.status in ['AVAILABLE','MAYBE','UNAVAILABLE'];
    allow delete: if member() && (resource.data.userId==request.auth.uid || owner());
   }

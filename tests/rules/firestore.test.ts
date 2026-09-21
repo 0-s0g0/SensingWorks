@@ -418,22 +418,128 @@ it('reference step edits are available to assignees, keep sibling progress and r
   };
   const before = await snapshot();
   const existing = before.wbsItems.find((w) => w.wbsCode === '2.2.2')!;
-  await assertSucceeds(saveAction(before, { type: 'subtask', payload: { id: existing.id, operation: 'rename', title: 'Edited reference' } }, actor, db as unknown as Firestore));
-  await assertSucceeds(saveAction(await snapshot(), { type: 'subtask', payload: { missionId: 'mission-2-2', operation: 'add', title: 'New reference' } }, actor, db as unknown as Firestore));
+  await assertSucceeds(
+    saveAction(
+      before,
+      {
+        type: 'subtask',
+        payload: { id: existing.id, operation: 'rename', title: 'Edited reference' },
+      },
+      actor,
+      db as unknown as Firestore,
+    ),
+  );
+  await assertSucceeds(
+    saveAction(
+      await snapshot(),
+      {
+        type: 'subtask',
+        payload: { missionId: 'mission-2-2', operation: 'add', title: 'New reference' },
+      },
+      actor,
+      db as unknown as Firestore,
+    ),
+  );
   const after = await snapshot();
   const created = after.wbsItems.find((w) => w.title === 'New reference')!;
-  await assertSucceeds(saveAction(after, { type: 'subtask', payload: { id: created.id, operation: 'delete' } }, actor, db as unknown as Firestore));
+  await assertSucceeds(
+    saveAction(
+      after,
+      { type: 'subtask', payload: { id: created.id, operation: 'delete' } },
+      actor,
+      db as unknown as Firestore,
+    ),
+  );
   const final = await snapshot();
-  expect(final.wbsItems.find((w) => w.wbsCode === '2.2.1')).toEqual(before.wbsItems.find((w) => w.wbsCode === '2.2.1'));
+  expect(final.wbsItems.find((w) => w.wbsCode === '2.2.1')).toEqual(
+    before.wbsItems.find((w) => w.wbsCode === '2.2.1'),
+  );
   expect(final.wbsItems.find((w) => w.id === existing.id)?.title).toBe('Edited reference');
   const outside = before.wbsItems.find((w) => w.wbsCode === '2.3.1')!;
-  await assertFails(updateDoc(doc(as('demo-tanaka'), 'wbsItems', outside.id), { title: 'Unauthorized' }));
+  await assertFails(
+    updateDoc(doc(as('demo-tanaka'), 'wbsItems', outside.id), { title: 'Unauthorized' }),
+  );
 });
 
 it('start date updates preserve legacy documents and allow only Owner or assignees', async () => {
   const target = doc(as('demo-aoki'), 'wbsItems', 'mission-2-3');
   await assertSucceeds(updateDoc(target, { startDate: '2026-09-21' }));
   await assertFails(updateDoc(target, { startDate: '2027-04-01' }));
-  await assertFails(updateDoc(doc(as('demo-tanaka'), 'wbsItems', 'mission-2-3'), { startDate: '2026-09-22' }));
-  await assertSucceeds(updateDoc(doc(as('demo-owner'), 'wbsItems', 'mission-2-3'), { startDate: '' }));
+  await assertFails(
+    updateDoc(doc(as('demo-tanaka'), 'wbsItems', 'mission-2-3'), { startDate: '2026-09-22' }),
+  );
+  await assertSucceeds(
+    updateDoc(doc(as('demo-owner'), 'wbsItems', 'mission-2-3'), { startDate: '' }),
+  );
+});
+
+it('Admin manages the app, is excluded from participation, and cannot self-register privileges', async () => {
+  await env.withSecurityRulesDisabled(async (c) =>
+    setDoc(doc(c.firestore(), 'users', 'admin'), { name: 'Admin', role: 'ADMIN', active: true }),
+  );
+  const db = as('admin');
+  await assertSucceeds(getDocs(collection(db, 'rewardPrivate')));
+  await assertSucceeds(getDocs(collection(db, 'loginSessions')));
+  await assertSucceeds(updateDoc(doc(db, 'wbsItems', 'phase-1'), { title: 'Admin edit' }));
+  await assertSucceeds(updateDoc(doc(db, 'users', 'demo-sato'), { active: false }));
+  await assertFails(
+    updateDoc(doc(db, 'wbsItems', 'mission-2-3'), { assigneeIds: ['admin'], primaryId: 'admin' }),
+  );
+  await assertFails(
+    setDoc(doc(db, 'availability', 'admin_2026-09-21_10'), {
+      userId: 'admin',
+      date: '2026-09-21',
+      hour: 10,
+      status: 'AVAILABLE',
+    }),
+  );
+  await assertFails(
+    setDoc(doc(db, 'weeklyReports', 'admin_2026-09-21'), {
+      userId: 'admin',
+      weekStart: '2026-09-21',
+      wentWell: '',
+      challenges: '',
+      nextWeek: '',
+      needHelp: '',
+      mostTimeSpent: '',
+      status: 'DRAFT',
+      updatedAt: '',
+    }),
+  );
+  await assertFails(
+    setDoc(doc(as('new-admin'), 'users', 'new-admin'), { name: 'x', role: 'ADMIN', active: true }),
+  );
+  await assertFails(updateDoc(doc(as('demo-aoki'), 'users', 'demo-aoki'), { role: 'ADMIN' }));
+});
+
+it('MID mixed save and repeated clearing of empty slots succeeds for Team', async () => {
+  const state = createSeed(),
+    actor = state.users.find((u) => u.id === 'demo-aoki')!;
+  const db = as(actor.id);
+  const action = {
+    type: 'availability' as const,
+    payload: {
+      userId: actor.id,
+      cells: [
+        { date: '2026-10-05', hour: 10, status: 'AVAILABLE' },
+        { date: '2026-10-05', hour: 11, status: null },
+      ],
+    },
+  };
+  await assertSucceeds(saveAction(state, action, actor, db as unknown as Firestore));
+  expect((await getDoc(doc(db, 'availability', `${actor.id}_2026-10-05_10`))).data()?.status).toBe(
+    'AVAILABLE',
+  );
+  const clear = {
+    type: 'availability' as const,
+    payload: {
+      userId: actor.id,
+      cells: [
+        { date: '2026-10-05', hour: 10, status: null },
+        { date: '2026-10-05', hour: 11, status: null },
+      ],
+    },
+  };
+  await assertSucceeds(saveAction(state, clear, actor, db as unknown as Firestore));
+  await assertSucceeds(saveAction(state, clear, actor, db as unknown as Firestore));
 });

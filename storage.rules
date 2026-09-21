@@ -5,7 +5,7 @@ service firebase.storage {
   match /attachments/{missionId}/{userId}/{fileName} {
    allow read: if member();
    allow create: if member() && userId==request.auth.uid && request.auth.uid in firestore.get(/databases/(default)/documents/wbsItems/$(missionId)).data.assigneeIds && request.resource.size <= 25 * 1024 * 1024;
-   allow delete: if member() && (userId==request.auth.uid || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role=='OWNER');
+   allow delete: if member() && (userId==request.auth.uid || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['OWNER','ADMIN']);
    allow update: if false;
   }
  }

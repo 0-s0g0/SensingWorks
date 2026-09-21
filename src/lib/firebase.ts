@@ -1,3 +1,4 @@
+import { canManage } from './domain';
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import {
   connectAuthEmulator,
@@ -93,7 +94,7 @@ export function subscribeWorkspace(
   error: (message: string) => void,
 ): Unsubscribe {
   if (!db) return () => {};
-  const keys = role === 'OWNER' ? [...collections, 'rewardPrivate' as const] : collections;
+  const keys = canManage({ role }) ? [...collections, 'rewardPrivate' as const] : collections;
   const unsub = keys.map((key) => {
     const target =
       key === 'activityLogs'
@@ -145,15 +146,22 @@ export async function saveAction(state: State, action: Action, user: Profile, da
   if (action.type === 'availability') {
     const userId = String(action.payload.userId ?? user.id),
       cells = action.payload.cells as { date: string; hour: number; status: string | null }[];
-    // Independent hourly cells are idempotent; no read-before-write or paid backend is needed.
+    // Check deletions transactionally: deleting an absent document cannot satisfy
+    // ownership Rules, and a local snapshot alone can be stale after another tab clears it.
     for (let i = 0; i < cells.length; i += 400) {
-      const batch = writeBatch(db);
-      for (const c of cells.slice(i, i + 400)) {
-        const target = doc(db, 'availability', `${userId}_${c.date}_${c.hour}`);
-        if (c.status) batch.set(target, { userId, ...c });
-        else batch.delete(target);
-      }
-      await batch.commit();
+      const chunk = cells.slice(i, i + 400);
+      await runTransaction(db, async (tx) => {
+        const clears = chunk.filter((c) => !c.status);
+        const snapshots = await Promise.all(
+          clears.map((c) => tx.get(doc(db, 'availability', `${userId}_${c.date}_${c.hour}`))),
+        );
+        const existing = new Set(snapshots.filter((s) => s.exists()).map((s) => s.id));
+        for (const c of chunk) {
+          const target = doc(db, 'availability', `${userId}_${c.date}_${c.hour}`);
+          if (c.status) tx.set(target, { userId, date: c.date, hour: c.hour, status: c.status });
+          else if (existing.has(target.id)) tx.delete(target);
+        }
+      });
     }
     const log = next.activityLogs[0];
     await setDoc(doc(db, 'activityLogs', log.id), dataOf(log));

@@ -1,4 +1,6 @@
 'use client';
+import { canManage } from '@/lib/domain';
+import { isParticipant } from '@/lib/domain';
 import { downloadCsv, weeklyCsv } from '@/lib/csv';
 import { WeeklyMatrix } from './weekly-matrix';
 import { weeklyFields, currentReportWeek, weeklyStart, weeklyEnd } from '@/lib/weekly';
@@ -73,8 +75,9 @@ function Shell() {
       </div>
     );
   if (!authenticated) return <Login error={error} />;
-  const navigation =
-    user.role === 'OWNER' ? [...nav, { href: '/admin', name: '管理', icon: Settings2 }] : nav;
+  const navigation = canManage(user)
+    ? [...nav, { href: '/admin', name: '管理', icon: Settings2 }]
+    : nav;
   const missions = missionsOf(state),
     percent = Math.round(
       (missions.filter((m) => m.status === 'COMPLETED').length / Math.max(1, missions.length)) *
@@ -86,7 +89,7 @@ function Shell() {
   else if (path === '/reports') content = <ReportsPage />;
   else if (path === '/availability') content = <AvailabilityPage />;
   else if (path === '/profile') content = <ProfilePage />;
-  else if (path === '/admin' && user.role === 'OWNER') content = <AdminPage />;
+  else if (path === '/admin' && canManage(user)) content = <AdminPage />;
   else
     content = (
       <Empty title="この画面は利用できません" description="サイドバーから画面を選んでください。" />
@@ -118,7 +121,7 @@ function Shell() {
           </div>
           <ChevronDown size={14} />
         </div>
-        <div className="nav-caption">{user.role === 'OWNER' ? 'OWNER' : 'TEAM'}</div>
+        <div className="nav-caption">{user.role}</div>
         <nav aria-label="メインナビゲーション">
           {navigation.map((n) => (
             <Link key={n.href} href={n.href} className={path === n.href ? 'active' : ''}>
@@ -140,7 +143,13 @@ function Shell() {
             <Avatar name={user.name} />
             <div>
               <strong>{user.name}</strong>
-              <small>{user.role === 'OWNER' ? 'プロジェクトオーナー' : 'チームメンバー'}</small>
+              <small>
+                {user.role === 'ADMIN'
+                  ? '管理専用Admin'
+                  : canManage(user)
+                    ? 'プロジェクトオーナー'
+                    : 'チームメンバー'}
+              </small>
             </div>
             {!demo && (
               <button className="icon-button" aria-label="ログアウト" onClick={logout}>
@@ -175,7 +184,8 @@ function Shell() {
               >
                 {state.users.map((u) => (
                   <option key={u.id} value={u.id}>
-                    {u.name} / {u.role === 'OWNER' ? 'Owner' : 'Team'}
+                    {u.name} /{' '}
+                    {u.role === 'ADMIN' ? 'Admin' : u.role === 'OWNER' ? 'Owner' : 'Team'}
                   </option>
                 ))}
               </select>
@@ -305,6 +315,22 @@ function Home() {
       )
       .sort((a, b) => a.date.localeCompare(b.date) || a.hour - b.hour)
       .slice(0, 5);
+  if (!isParticipant(user))
+    return (
+      <>
+        <PageHeading
+          eyebrow="ADMIN WORKSPACE"
+          title="管理専用ワークスペース"
+          description="チームの進捗と提出状況を確認できます。担当・週報提出・MID.参加の対象には含まれません。"
+        />
+        <div className="panel detail-section">
+          <Link className="text-link" href="/admin">
+            管理画面を開く →
+          </Link>
+        </div>
+        <WeeklyMatrix />
+      </>
+    );
   return (
     <>
       <PageHeading
@@ -356,7 +382,13 @@ function Home() {
 function ReportsPage() {
   const { state, user } = useStore(),
     [week, setWeek] = useState(currentReportWeek),
-    [person, setPerson] = useState(user.id);
+    [person, setPerson] = useState(
+      isParticipant(user) ? user.id : (state.users.find(isParticipant)?.id ?? ''),
+    );
+  useEffect(() => {
+    if (!state.users.some((u) => u.id === person && isParticipant(u)))
+      setPerson(state.users.find(isParticipant)?.id ?? '');
+  }, [state.users, person]);
   const report = state.weeklyReports.find((r) => r.userId === person && r.weekStart === week);
   const done = missionsOf(state).filter(
       (m) => m.assigneeIds.includes(person) && inWeek(m.completedAt, week),
@@ -411,7 +443,7 @@ function ReportsPage() {
           value={person}
           onChange={(e) => setPerson(e.target.value)}
         >
-          {state.users.map((u) => (
+          {state.users.filter(isParticipant).map((u) => (
             <option key={u.id} value={u.id}>
               {u.name}
             </option>
@@ -420,7 +452,7 @@ function ReportsPage() {
       </div>
       <div className="home-summary-grid">
         <section className="panel detail-section">
-          {person === user.id ? (
+          {person === user.id && isParticipant(user) ? (
             <WeeklyEditor key={`${week}-${person}`} week={week} report={report} />
           ) : (
             <>
@@ -563,11 +595,17 @@ function WeeklyEditor({ week, report }: { week: string; report?: WeeklyReport })
 }
 function ProfilePage() {
   const { state, user } = useStore(),
-    [person, setPerson] = useState(user.id),
+    [person, setPerson] = useState(
+      isParticipant(user) ? user.id : (state.users.find(isParticipant)?.id ?? ''),
+    ),
     awards = state.pointAwards.filter((a) => a.userId === person),
     done = missionsOf(state).filter(
       (m) => m.status === 'COMPLETED' && m.assigneeIds.includes(person),
     );
+  useEffect(() => {
+    if (!state.users.some((u) => u.id === person && isParticipant(u)))
+      setPerson(state.users.find(isParticipant)?.id ?? '');
+  }, [state.users, person]);
   return (
     <>
       <PageHeading
@@ -587,7 +625,7 @@ function ProfilePage() {
             </tr>
           </thead>
           <tbody>
-            {state.users.map((u) => {
+            {state.users.filter(isParticipant).map((u) => {
               const all = missionsOf(state).filter((m) => m.assigneeIds.includes(u.id));
               return (
                 <tr key={u.id}>
@@ -802,13 +840,14 @@ function AdminPage() {
                       value={u.role}
                       onChange={(e) =>
                         updateUser(u.id, {
-                          role: e.target.value as 'TEAM' | 'OWNER',
+                          role: e.target.value as 'TEAM' | 'OWNER' | 'ADMIN',
                           active: u.active,
                         }).catch((e) => setMessage(e.message))
                       }
                     >
                       <option>TEAM</option>
                       <option>OWNER</option>
+                      <option value="ADMIN">ADMIN（管理専用・参加しない）</option>
                     </select>
                   </td>
                   <td>

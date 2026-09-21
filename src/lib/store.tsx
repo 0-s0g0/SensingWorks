@@ -1,4 +1,5 @@
 'use client';
+import { canManage } from './domain';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -161,7 +162,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }
   // Even the demo context exposed to Team has no financial documents; demo source remains fictional.
-  const visible = user.role === 'OWNER' ? state : { ...state, rewardPrivate: [] };
+  const visible = canManage(user) ? state : { ...state, rewardPrivate: [] };
   return (
     <Context.Provider
       value={{

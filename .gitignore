@@ -9,3 +9,5 @@ test-results/
 out/
 .firebase/
 *-debug.log
+
+.next-e2e/

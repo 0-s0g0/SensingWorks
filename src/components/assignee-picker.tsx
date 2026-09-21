@@ -1,4 +1,5 @@
 'use client';
+import { isParticipant } from '@/lib/domain';
 import { useState } from 'react';
 import { ChevronDown, UserRound } from 'lucide-react';
 import { useStore } from '@/lib/store';
@@ -59,13 +60,15 @@ export function AssigneePicker({ item }: { item: WbsItem }) {
           <fieldset disabled={busy || locked} className="assignee-options">
             <legend>担当者 {ids.length} / 6</legend>
             {state.users
-              .filter((u) => u.active || ids.includes(u.id))
+              .filter((u) => (u.active && isParticipant(u)) || ids.includes(u.id))
               .map((u) => (
                 <label key={u.id}>
                   <input
                     type="checkbox"
                     checked={ids.includes(u.id)}
-                    disabled={!ids.includes(u.id) && (!u.active || ids.length >= 6)}
+                    disabled={
+                      !ids.includes(u.id) && (!u.active || !isParticipant(u) || ids.length >= 6)
+                    }
                     onChange={(e) => {
                       const next = e.target.checked
                         ? [...ids, u.id]

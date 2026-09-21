@@ -1,4 +1,5 @@
 'use client';
+import { isParticipant } from '@/lib/domain';
 import { Download } from 'lucide-react';
 import { downloadCsv, weeklyCsv } from '@/lib/csv';
 import { useEffect, useState } from 'react';
@@ -18,7 +19,7 @@ export function WeeklyMatrix() {
   }, []);
   const reports = new Map(state.weeklyReports.map((r) => [`${r.userId}_${r.weekStart}`, r]));
   const people = state.users.filter(
-    (u) => u.active || state.weeklyReports.some((r) => r.userId === u.id),
+    (u) => isParticipant(u) && (u.active || state.weeklyReports.some((r) => r.userId === u.id)),
   );
   const report = selected ? reports.get(`${selected.userId}_${selected.week}`) : undefined;
   return (

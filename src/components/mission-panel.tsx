@@ -1,4 +1,6 @@
 'use client';
+import { canManage } from '@/lib/domain';
+import { isParticipant } from '@/lib/domain';
 import { SubtaskEditButton } from './subtask-edit-button';
 import { useState } from 'react';
 import { useStore } from '@/lib/store';
@@ -60,7 +62,7 @@ function SubtaskSection({
     .filter((x) => x.parentId === missionId)
     .sort((a, b) => a.order - b.order);
   const canEdit =
-    user.role === 'OWNER' ||
+    canManage(user) ||
     (involved && mission && effectiveStatus(mission, state.wbsItems) !== 'LOCKED');
 
   const addSubtask = async () => {
@@ -162,7 +164,7 @@ export function MissionPanel({ id, close }: { id: string; close: () => void }) {
     [message, setMessage] = useState('');
   if (!m && id !== 'new') return null;
   const report = state.completionReports.find((r) => r.missionId === id);
-  const reward = user.role === 'OWNER' ? state.rewardPrivate.find((r) => r.id === id) : undefined;
+  const reward = canManage(user) ? state.rewardPrivate.find((r) => r.id === id) : undefined;
   const involved = !!m?.assigneeIds.includes(user.id);
   return (
     <Modal title={m ? `${m.wbsCode} ${m.title}` : '中工程を追加'} close={close}>
@@ -209,7 +211,7 @@ export function MissionPanel({ id, close }: { id: string; close: () => void }) {
                   {report ? '終了報告を編集' : '終了報告を作成'}
                 </Button>
               )}
-              {(user.role === 'OWNER' || (involved && !['COMPLETED'].includes(m.status))) && (
+              {(canManage(user) || (involved && !['COMPLETED'].includes(m.status))) && (
                 <Button variant="outline" onClick={() => setMode('edit')}>
                   中工程を編集
                 </Button>
@@ -284,7 +286,7 @@ export function MissionPanel({ id, close }: { id: string; close: () => void }) {
                 ))}
               </section>
             )}
-            {user.role === 'OWNER' && reward && (
+            {canManage(user) && reward && (
               <section className="private-panel">
                 <h3>Owner専用・内部報酬</h3>
                 <p>
@@ -297,7 +299,7 @@ export function MissionPanel({ id, close }: { id: string; close: () => void }) {
                 ))}
               </section>
             )}
-            {user.role === 'OWNER' && report?.status === 'SUBMITTED' && (
+            {canManage(user) && report?.status === 'SUBMITTED' && (
               <ReviewEditor item={m} report={report} />
             )}
           </>
@@ -611,7 +613,7 @@ function MissionEditor({ item, done }: { item?: WbsItem; done: () => void }) {
     [newSubtask, setNewSubtask] = useState(''),
     [message, setMessage] = useState('');
   const reward = state.rewardPrivate.find((r) => r.id === item?.id);
-  const isOwner = user.role === 'OWNER';
+  const isOwner = canManage(user);
   const isTeamEdit = !isOwner && item;
   return (
     <form
@@ -763,7 +765,7 @@ function MissionEditor({ item, done }: { item?: WbsItem; done: () => void }) {
       <fieldset>
         <legend>担当者（最大6人）</legend>
         {state.users
-          .filter((u) => u.active)
+          .filter((u) => u.active && isParticipant(u))
           .map((u) => (
             <label className="checklist" key={u.id}>
               <input

@@ -1,3 +1,4 @@
+import { isParticipant } from './domain';
 import { weeklyFields, weeklyWeeks, weeklyStatus } from './weekly';
 import { inWeek, missionsOf } from './domain';
 import { addDays } from 'date-fns';
@@ -108,7 +109,9 @@ export function availabilityCsv(state: State, week: string, target = 'team') {
       'ステータスコード',
     ],
   ];
-  const people = state.users.filter((u) => (target === 'team' ? u.active : u.id === target));
+  const people = state.users.filter(
+    (u) => isParticipant(u) && (target === 'team' ? u.active : u.id === target),
+  );
   const answers = new Map(
     state.availability.map((a) => [`${a.userId}/${a.date}/${a.hour}`, a.status]),
   );
@@ -152,8 +155,12 @@ export function weeklyCsv(
       '今週提出した終了報告',
     ],
   ];
-  const people = state.users.filter((u) =>
-    scope ? u.id === scope.userId : u.active || state.weeklyReports.some((r) => r.userId === u.id),
+  const people = state.users.filter(
+    (u) =>
+      isParticipant(u) &&
+      (scope
+        ? u.id === scope.userId
+        : u.active || state.weeklyReports.some((r) => r.userId === u.id)),
   );
   const weeks = scope ? [scope.week] : weeklyWeeks;
   for (const week of weeks)

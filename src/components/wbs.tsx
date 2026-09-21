@@ -1,4 +1,6 @@
 'use client';
+import { canManage } from '@/lib/domain';
+import { isParticipant } from '@/lib/domain';
 import { downloadCsv, wbsCsv } from '@/lib/csv';
 import { format } from '@/lib/time';
 import { SubtaskEditButton } from './subtask-edit-button';
@@ -119,7 +121,7 @@ export function WbsPage() {
               <Download size={16} />
               全WBSをCSV出力
             </Button>
-            {user.role === 'OWNER' && (
+            {canManage(user) && (
               <Button onClick={() => open('new')} disabled={!phases.length}>
                 <Plus size={16} />
                 中工程を追加
@@ -202,7 +204,7 @@ export function WbsPage() {
           >
             <option value="">すべての担当者</option>
             <option value="unassigned">未担当</option>
-            {state.users.map((u) => (
+            {state.users.filter(isParticipant).map((u) => (
               <option key={u.id} value={u.id}>
                 {u.name}
               </option>
@@ -272,7 +274,7 @@ export function WbsPage() {
                       <span>{phase.wbsCode}.</span>
                       <strong>{phase.title}</strong>
                     </button>
-                    {user.role === 'OWNER' && (
+                    {canManage(user) && (
                       <button
                         className="icon-button"
                         aria-label={`${phase.wbsCode} 大工程名を編集`}
@@ -296,8 +298,7 @@ export function WbsPage() {
                       progress = progressOf(state, m),
                       status = effectiveStatus(m, state.wbsItems),
                       editable =
-                        user.role === 'OWNER' ||
-                        (m.assigneeIds.includes(user.id) && status !== 'LOCKED');
+                        canManage(user) || (m.assigneeIds.includes(user.id) && status !== 'LOCKED');
                     return (
                       <Fragment key={m.id}>
                         <div
@@ -357,7 +358,7 @@ export function WbsPage() {
                           <div role="cell" data-label="開始日 / 期限">
                             <div title="開始日">
                               {m.startDate || '未設定'}
-                              {(user.role === 'OWNER' || m.assigneeIds.includes(user.id)) && (
+                              {(canManage(user) || m.assigneeIds.includes(user.id)) && (
                                 <button
                                   className="icon-button"
                                   aria-label={`${m.wbsCode} 開始日を編集`}

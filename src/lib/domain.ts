@@ -11,7 +11,15 @@ export type Status =
   | 'COMPLETED'
   | 'ON_HOLD';
 export type AvailabilityStatus = 'AVAILABLE' | 'MAYBE' | 'UNAVAILABLE';
-export type Profile = { id: string; name: string; role: 'TEAM' | 'OWNER'; active: boolean };
+export type Profile = {
+  id: string;
+  name: string;
+  role: 'TEAM' | 'OWNER' | 'ADMIN';
+  active: boolean;
+};
+export const canManage = (user: Pick<Profile, 'role'>) =>
+  user.role === 'OWNER' || user.role === 'ADMIN';
+export const isParticipant = (user: Profile) => user.role !== 'ADMIN';
 export type Project = { id: string; name: string; startDate: string; endDate: string };
 export type WbsItem = {
   id: string;
@@ -251,7 +259,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
     p = action.payload,
     now = new Date().toISOString();
   const owner = () => {
-    if (actor.role !== 'OWNER') throw Error('Owner権限が必要です。');
+    if (!canManage(actor)) throw Error('Owner権限が必要です。');
   };
   const mission = () => {
     const m = s.wbsItems.find((x) => x.id === p.missionId && x.level === 2);
@@ -264,7 +272,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
   switch (action.type) {
     case 'schedule': {
       const m = mission();
-      if (actor.role !== 'OWNER') assigned(m);
+      if (!canManage(actor)) assigned(m);
       const startDate = String(p.startDate ?? '');
       validateStartDate(startDate, m.deadline);
       m.startDate = startDate;
@@ -280,7 +288,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
         !Array.isArray(ids) ||
         ids.length > 6 ||
         new Set(ids).size !== ids.length ||
-        ids.some((id) => !s.users.some((u) => u.id === id && u.active))
+        ids.some((id) => !s.users.some((u) => u.id === id && u.active && isParticipant(u)))
       )
         throw Error('担当者は有効なメンバーから最大6人まで選んでください。');
       if (ids.length ? !primaryId || !ids.includes(primaryId) : primaryId !== null)
@@ -311,7 +319,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
       const m = p.item as WbsItem,
         old = s.wbsItems.find((x) => x.id === m.id);
       validateStartDate(m.startDate, m.deadline);
-      const isOwner = actor.role === 'OWNER';
+      const isOwner = canManage(actor);
       const isTeamEdit = !isOwner && old;
 
       if (isTeamEdit) {
@@ -333,7 +341,9 @@ export function transition(state: State, action: Action, actor: Profile): State 
         if (
           m.assigneeIds.length > 6 ||
           new Set(m.assigneeIds).size !== m.assigneeIds.length ||
-          m.assigneeIds.some((id) => !s.users.some((u) => u.id === id && u.active))
+          m.assigneeIds.some(
+            (id) => !s.users.some((u) => u.id === id && u.active && isParticipant(u)),
+          )
         )
           throw Error('担当者は有効なメンバーから最大6人まで選んでください。');
         if (
@@ -400,7 +410,9 @@ export function transition(state: State, action: Action, actor: Profile): State 
         if (
           m.assigneeIds.length > 6 ||
           new Set(m.assigneeIds).size !== m.assigneeIds.length ||
-          m.assigneeIds.some((id) => !s.users.some((u) => u.id === id && u.active))
+          m.assigneeIds.some(
+            (id) => !s.users.some((u) => u.id === id && u.active && isParticipant(u)),
+          )
         )
           throw Error('担当者は有効なメンバーから最大6人まで選んでください。');
         if (
@@ -482,7 +494,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
       const c = s.wbsItems.find((x) => x.id === p.id && x.level === 3);
       const m = s.wbsItems.find((x) => x.id === (c?.parentId ?? p.missionId) && x.level === 2);
       if (!m || (!c && p.operation !== 'add')) throw Error('小工程が見つかりません。');
-      if (actor.role !== 'OWNER') {
+      if (!canManage(actor)) {
         assigned(m);
         if (effectiveStatus(m, s.wbsItems) === 'LOCKED') throw Error('前提が未完了です。');
       }
@@ -622,6 +634,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
       break;
     }
     case 'report': {
+      if (!isParticipant(actor)) throw Error('管理専用Adminは週報の提出対象ではありません。');
       const r = p.report as WeeklyReport;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(r.weekStart) || weekOf(jstDate(r.weekStart)) !== r.weekStart)
         throw Error('週の開始日は月曜日です。');
@@ -637,7 +650,8 @@ export function transition(state: State, action: Action, actor: Profile): State 
     case 'availability': {
       const userId = String(p.userId ?? actor.id);
       if (userId !== actor.id) owner();
-      if (!s.users.some((u) => u.id === userId)) throw Error('対象メンバーがいません。');
+      if (!s.users.some((u) => u.id === userId && isParticipant(u)))
+        throw Error('対象メンバーがいません。');
       for (const c of p.cells as {
         date: string;
         hour: number;
