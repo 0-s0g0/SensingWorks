@@ -20,7 +20,7 @@ export function PaymentStatements({ month, personId }: { month?: string; personI
   const [selected, setSelected] = useState('');
   const userId = personId || selected || people[0]?.id || '';
   return (
-    <AccordionCard title="AI電磁波・個人別支払明細">
+    <AccordionCard title="電磁波PJ・個人別支払明細">
       <p>個人・期間ごとに費用を保存し、Word形式で出力できます。</p>
       {!personId && (
         <Field label="明細の対象者">

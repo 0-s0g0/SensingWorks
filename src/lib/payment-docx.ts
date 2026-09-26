@@ -55,7 +55,7 @@ export async function paymentDocx(
           new Paragraph({
             heading: HeadingLevel.TITLE,
             children: [
-              new TextRun({ text: 'AI電磁波 支払明細書', color: '000000', size: 36, bold: true }),
+              new TextRun({ text: '電磁波PJ 支払明細書', color: '000000', size: 36, bold: true }),
             ],
           }),
           ...[
