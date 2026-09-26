@@ -1,6 +1,6 @@
 'use client';
 import { TravelPage } from './travel';
-import { PaymentStatements } from './payment-statements';
+import { MonthlyManagement } from './monthly-management';
 import { canManage } from '@/lib/domain';
 import { isParticipant } from '@/lib/domain';
 import { downloadCsv, weeklyCsv } from '@/lib/csv';
@@ -674,6 +674,7 @@ function ProfilePage() {
 }
 function AdminPage() {
   const { state, user, demo, act, busy } = useStore(),
+    [tab, setTab] = useState<'settlement' | 'reviews' | 'accounts'>('settlement'),
     [message, setMessage] = useState(''),
     [domains, setDomains] = useState(defaultAccess.allowedDomains.join('\n')),
     [emails, setEmails] = useState(''),
@@ -698,234 +699,298 @@ function AdminPage() {
       <PageHeading
         eyebrow="OWNER MANAGEMENT"
         title="管理"
-        description="終了報告のレビュー、内部報酬、利用アカウントを管理します。"
+        description="月末の精算、申請の確認、アカウント設定をまとめて管理します。"
       />
       <Notice text={message} />
-      <WeeklyMatrix />
-      <LoginHistory />
-      <PaymentStatements />
-      {missionsOf(state).length < 57 && (
-        <section className="panel detail-section">
-          <h2>プロジェクトの初期設定</h2>
-          <p>
-            9大工程・57中工程・211小工程の添付WBSを登録します。既存の工程は保持し、未登録分のみ追加します。開始日・期限・担当は未設定、内部報酬は未確定の0円で登録します。
-          </p>
-          <Button
-            disabled={busy || demo}
-            onClick={() =>
-              initializeProject()
-                .then(() => setMessage('初期WBSを登録しました。'))
-                .catch((e) => setMessage(e.message))
-            }
+      <div className="management-tabs" role="tablist" aria-label="管理メニュー">
+        {(
+          [
+            ['settlement', '月末精算'],
+            ['reviews', '申請・レビュー'],
+            ['accounts', 'アカウント設定'],
+          ] as const
+        ).map(([id, label], index, tabs) => (
+          <button
+            key={id}
+            role="tab"
+            id={`admin-tab-${id}`}
+            aria-controls={`admin-panel-${id}`}
+            aria-selected={tab === id}
+            tabIndex={tab === id ? 0 : -1}
+            onClick={() => setTab(id)}
+            onKeyDown={(e) => {
+              const next =
+                e.key === 'ArrowRight'
+                  ? (index + 1) % tabs.length
+                  : e.key === 'ArrowLeft'
+                    ? (index + tabs.length - 1) % tabs.length
+                    : e.key === 'Home'
+                      ? 0
+                      : e.key === 'End'
+                        ? tabs.length - 1
+                        : -1;
+              if (next >= 0) {
+                e.preventDefault();
+                setTab(tabs[next][0]);
+                document.getElementById(`admin-tab-${tabs[next][0]}`)?.focus();
+              }
+            }}
           >
-            初期WBSを登録
-          </Button>
+            {label}
+            {id === 'reviews' && waiting.length > 0 && (
+              <span className="tab-count">{waiting.length}</span>
+            )}
+          </button>
+        ))}
+      </div>
+      <div
+        role="tabpanel"
+        id="admin-panel-settlement"
+        aria-labelledby="admin-tab-settlement"
+        hidden={tab !== 'settlement'}
+      >
+        <MonthlyManagement />
+      </div>
+      <div
+        role="tabpanel"
+        id="admin-panel-reviews"
+        aria-labelledby="admin-tab-reviews"
+        hidden={tab !== 'reviews'}
+      >
+        <section>
+          <h2>レビュー待ち {waiting.length}件</h2>
+          <MissionTable items={waiting} />
         </section>
-      )}
-      <section>
-        <h2>レビュー待ち {waiting.length}件</h2>
-        <MissionTable items={waiting} />
-      </section>
-      <section className="panel detail-section">
-        <h2>Owner専用・内部報酬</h2>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>中工程</th>
-                <th>総ポイント</th>
-                <th>内部総報酬</th>
-                <th>内部実報酬配分</th>
-                <th>支払状態</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.rewardPrivate.map((r) => {
-                const m = state.wbsItems.find((m) => m.id === r.id);
-                return (
-                  <tr key={r.id}>
-                    <td>
-                      <Link href={`/wbs/#${r.id}`}>
-                        {m?.wbsCode} {m?.title}
-                      </Link>
-                    </td>
-                    <td>{m?.pointValue}pt</td>
-                    <td>{yen(r.totalAmount)}</td>
-                    <td>
-                      {Object.entries(r.allocations).map(([id, amount]) => (
-                        <p key={id}>
-                          {state.users.find((u) => u.id === id)?.name} {yen(amount)}
-                        </p>
-                      ))}
-                    </td>
-                    <td>
-                      {r.paymentStatus === 'PAID' ? (
-                        '支払済み'
-                      ) : r.paymentStatus === 'DRAFT' ? (
-                        '未確定'
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy}
-                          onClick={() =>
-                            act({ type: 'paid', payload: { id: r.id } }).catch((e) =>
-                              setMessage(e.message),
-                            )
-                          }
-                        >
-                          支払済みにする
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      <section className="panel detail-section">
-        <h2>Googleアカウントの利用許可</h2>
-        <p>許可ドメインに属するアカウント、または個別許可アカウントが参加できます。</p>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            try {
-              if (demo) throw Error('デモでは変更できません。Firebase接続後に設定できます。');
-              const lines = (v: string) =>
-                v
-                  .split(/\s+/)
-                  .map((x) => x.trim().toLowerCase())
-                  .filter(Boolean);
-              if (!accessLoaded || savingAccess) return;
+        <WeeklyMatrix />
+        <section className="panel detail-section">
+          <h2>Owner専用・内部報酬</h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>中工程</th>
+                  <th>総ポイント</th>
+                  <th>内部総報酬</th>
+                  <th>内部実報酬配分</th>
+                  <th>支払状態</th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.rewardPrivate.map((r) => {
+                  const m = state.wbsItems.find((m) => m.id === r.id);
+                  return (
+                    <tr key={r.id}>
+                      <td>
+                        <Link href={`/wbs/#${r.id}`}>
+                          {m?.wbsCode} {m?.title}
+                        </Link>
+                      </td>
+                      <td>{m?.pointValue}pt</td>
+                      <td>{yen(r.totalAmount)}</td>
+                      <td>
+                        {Object.entries(r.allocations).map(([id, amount]) => (
+                          <p key={id}>
+                            {state.users.find((u) => u.id === id)?.name} {yen(amount)}
+                          </p>
+                        ))}
+                      </td>
+                      <td>
+                        {r.paymentStatus === 'PAID' ? (
+                          '支払済み'
+                        ) : r.paymentStatus === 'DRAFT' ? (
+                          '未確定'
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() =>
+                              act({ type: 'paid', payload: { id: r.id } }).catch((e) =>
+                                setMessage(e.message),
+                              )
+                            }
+                          >
+                            支払済みにする
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      <div
+        role="tabpanel"
+        id="admin-panel-accounts"
+        aria-labelledby="admin-tab-accounts"
+        hidden={tab !== 'accounts'}
+      >
+        <LoginHistory />
+        {missionsOf(state).length < 57 && (
+          <section className="panel detail-section">
+            <h2>プロジェクトの初期設定</h2>
+            <p>
+              9大工程・57中工程・211小工程の添付WBSを登録します。既存の工程は保持し、未登録分のみ追加します。開始日・期限・担当は未設定、内部報酬は未確定の0円で登録します。
+            </p>
+            <Button
+              disabled={busy || demo}
+              onClick={() =>
+                initializeProject()
+                  .then(() => setMessage('初期WBSを登録しました。'))
+                  .catch((e) => setMessage(e.message))
+              }
+            >
+              初期WBSを登録
+            </Button>
+          </section>
+        )}
+
+        <section className="panel detail-section">
+          <h2>Googleアカウントの利用許可</h2>
+          <p>許可ドメインに属するアカウント、または個別許可アカウントが参加できます。</p>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                if (demo) throw Error('デモでは変更できません。Firebase接続後に設定できます。');
+                const lines = (v: string) =>
+                  v
+                    .split(/\s+/)
+                    .map((x) => x.trim().toLowerCase())
+                    .filter(Boolean);
+                if (!accessLoaded || savingAccess) return;
+                setSavingAccess(true);
+                await saveAllowedDomains([...new Set(lines(domains))]);
+                setMessage('許可ドメインを保存しました。');
+              } catch (e) {
+                setMessage((e as Error).message);
+              } finally {
+                setSavingAccess(false);
+              }
+            }}
+          >
+            <div className="form-grid">
+              <Field label="許可ドメイン（1行1件）">
+                <textarea
+                  value={domains}
+                  onChange={(e) => setDomains(e.target.value)}
+                  placeholder="example.ac.jp"
+                />
+              </Field>
+            </div>
+            <Button disabled={demo || !accessLoaded || savingAccess}>
+              {savingAccess ? '保存中…' : '許可ドメインを保存'}
+            </Button>
+          </form>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (demo || !accessLoaded || savingAccess) return;
               setSavingAccess(true);
-              await saveAllowedDomains([...new Set(lines(domains))]);
-              setMessage('許可ドメインを保存しました。');
-            } catch (e) {
-              setMessage((e as Error).message);
-            } finally {
-              setSavingAccess(false);
-            }
-          }}
-        >
-          <div className="form-grid">
-            <Field label="許可ドメイン（1行1件）">
-              <textarea
-                value={domains}
-                onChange={(e) => setDomains(e.target.value)}
-                placeholder="example.ac.jp"
+              try {
+                setSavedEmails(await changeAllowedEmail(emails));
+                setEmails('');
+                setMessage('個別許可メールを追加しました。');
+              } catch (e) {
+                setMessage((e as Error).message);
+              } finally {
+                setSavingAccess(false);
+              }
+            }}
+          >
+            <Field label="追加するメールアドレス">
+              <input
+                type="email"
+                required
+                value={emails}
+                onChange={(e) => setEmails(e.target.value)}
+                placeholder="member@gmail.com"
+                disabled={savingAccess}
               />
             </Field>
-          </div>
-          <Button disabled={demo || !accessLoaded || savingAccess}>
-            {savingAccess ? '保存中…' : '許可ドメインを保存'}
-          </Button>
-        </form>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (demo || !accessLoaded || savingAccess) return;
-            setSavingAccess(true);
-            try {
-              setSavedEmails(await changeAllowedEmail(emails));
-              setEmails('');
-              setMessage('個別許可メールを追加しました。');
-            } catch (e) {
-              setMessage((e as Error).message);
-            } finally {
-              setSavingAccess(false);
-            }
-          }}
-        >
-          <Field label="追加するメールアドレス">
-            <input
-              type="email"
-              required
-              value={emails}
-              onChange={(e) => setEmails(e.target.value)}
-              placeholder="member@gmail.com"
-              disabled={savingAccess}
-            />
-          </Field>
+            <p className="help-text">
+              1人ずつ追加できます。登録済みのメールアドレスはそのまま残ります。
+            </p>
+            <Button disabled={demo || !accessLoaded || savingAccess || !emails.trim()}>
+              個別許可メールを追加
+            </Button>
+          </form>
+          <AllowedAccounts
+            emails={savedEmails}
+            loaded={accessLoaded}
+            busy={savingAccess}
+            onRemove={async (email) => {
+              if (demo || savingAccess) return;
+              setSavingAccess(true);
+              try {
+                setSavedEmails(await changeAllowedEmail(email, true));
+                setMessage('個別許可から削除しました。参加済みユーザーの利用状態は変わりません。');
+              } catch (e) {
+                setMessage((e as Error).message);
+              } finally {
+                setSavingAccess(false);
+              }
+            }}
+          />
           <p className="help-text">
-            1人ずつ追加できます。登録済みのメールアドレスはそのまま残ります。
+            許可リストは新規参加を制御します。既存ユーザーを停止する場合は、下の利用状態を無効にしてください。
           </p>
-          <Button disabled={demo || !accessLoaded || savingAccess || !emails.trim()}>
-            個別許可メールを追加
-          </Button>
-        </form>
-        <AllowedAccounts
-          emails={savedEmails}
-          loaded={accessLoaded}
-          busy={savingAccess}
-          onRemove={async (email) => {
-            if (demo || savingAccess) return;
-            setSavingAccess(true);
-            try {
-              setSavedEmails(await changeAllowedEmail(email, true));
-              setMessage('個別許可から削除しました。参加済みユーザーの利用状態は変わりません。');
-            } catch (e) {
-              setMessage((e as Error).message);
-            } finally {
-              setSavingAccess(false);
-            }
-          }}
-        />
-        <p className="help-text">
-          許可リストは新規参加を制御します。既存ユーザーを停止する場合は、下の利用状態を無効にしてください。
-        </p>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>メンバー</th>
-                <th>ロール</th>
-                <th>利用状態</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.users.map((u) => (
-                <tr key={u.id}>
-                  <td>{u.name}</td>
-                  <td>
-                    <select
-                      aria-label={`${u.name} ロール`}
-                      disabled={demo || u.id === user.id}
-                      value={u.role}
-                      onChange={(e) =>
-                        updateUser(u.id, {
-                          role: e.target.value as 'TEAM' | 'OWNER' | 'ADMIN',
-                          active: u.active,
-                        }).catch((e) => setMessage(e.message))
-                      }
-                    >
-                      <option>TEAM</option>
-                      <option>OWNER</option>
-                      <option value="ADMIN">ADMIN（管理専用・参加しない）</option>
-                    </select>
-                  </td>
-                  <td>
-                    <select
-                      aria-label={`${u.name} 利用状態`}
-                      disabled={demo || u.id === user.id}
-                      value={String(u.active)}
-                      onChange={(e) =>
-                        updateUser(u.id, { role: u.role, active: e.target.value === 'true' }).catch(
-                          (e) => setMessage(e.message),
-                        )
-                      }
-                    >
-                      <option value="true">有効</option>
-                      <option value="false">無効</option>
-                    </select>
-                  </td>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>メンバー</th>
+                  <th>ロール</th>
+                  <th>利用状態</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              </thead>
+              <tbody>
+                {state.users.map((u) => (
+                  <tr key={u.id}>
+                    <td>{u.name}</td>
+                    <td>
+                      <select
+                        aria-label={`${u.name} ロール`}
+                        disabled={demo || u.id === user.id}
+                        value={u.role}
+                        onChange={(e) =>
+                          updateUser(u.id, {
+                            role: e.target.value as 'TEAM' | 'OWNER' | 'ADMIN',
+                            active: u.active,
+                          }).catch((e) => setMessage(e.message))
+                        }
+                      >
+                        <option>TEAM</option>
+                        <option>OWNER</option>
+                        <option value="ADMIN">ADMIN（管理専用・参加しない）</option>
+                      </select>
+                    </td>
+                    <td>
+                      <select
+                        aria-label={`${u.name} 利用状態`}
+                        disabled={demo || u.id === user.id}
+                        value={String(u.active)}
+                        onChange={(e) =>
+                          updateUser(u.id, {
+                            role: u.role,
+                            active: e.target.value === 'true',
+                          }).catch((e) => setMessage(e.message))
+                        }
+                      >
+                        <option value="true">有効</option>
+                        <option value="false">無効</option>
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </>
   );
 }

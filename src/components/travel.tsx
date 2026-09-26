@@ -4,6 +4,7 @@ import { useStore } from '@/lib/store';
 import { canManage, isParticipant, yen } from '@/lib/domain';
 import { emptyRoute, travelTotal, type TravelRoute, type TravelClaim } from '@/lib/travel';
 import { format } from '@/lib/time';
+import { validPaymentDate } from '@/lib/payment';
 import { Button } from './ui/button';
 import { Field, Notice, PageHeading } from './ui/primitives';
 export function TravelPage() {
@@ -35,7 +36,13 @@ export function TravelPage() {
         <h2>交通費の申請一覧</h2>
         <div className="form-grid">
           <Field label="表示月">
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => {
+                if (validPaymentDate(`${e.target.value}-01`)) setMonth(e.target.value);
+              }}
+            />
           </Field>
           {canManage(user) && (
             <Field label="申請者">
@@ -52,6 +59,9 @@ export function TravelPage() {
             </Field>
           )}
         </div>
+        {person === user.id && isParticipant(user) && (
+          <NoTravelDeclaration key={user.id + month} month={month} />
+        )}
         <p>
           申請済み合計：
           {yen(
@@ -252,5 +262,52 @@ function TravelForm({ date, saved }: { date: string; saved?: TravelClaim }) {
         </Button>
       </div>
     </form>
+  );
+}
+
+function NoTravelDeclaration({ month }: { month: string }) {
+  const { state, user, act, busy } = useStore();
+  const [message, setMessage] = useState('');
+  const hasClaims = state.travelClaims.some(
+    (c) => c.userId === user.id && c.date.startsWith(`${month}-`),
+  );
+  const declared = state.travelDeclarations.some(
+    (d) => d.userId === user.id && d.month === month && d.status === 'NONE',
+  );
+  const noTravel = declared && !hasClaims;
+  return (
+    <div className="no-travel-declaration">
+      <div>
+        <strong>
+          {month}の交通費：{noTravel ? 'なし・申告済み' : hasClaims ? '記録あり' : '未申告'}
+        </strong>
+        <p>
+          {hasClaims
+            ? 'この月には交通費の記録があります。下書きは申請を完了してください。'
+            : '交通費が発生していない月は「交通費なし」を申告してください。あとから交通費を登録すると、この申告は自動で取り消されます。'}
+        </p>
+      </div>
+      <Button
+        variant="outline"
+        disabled={busy || (hasClaims && !declared)}
+        onClick={async () => {
+          setMessage('');
+          try {
+            await act({
+              type: 'travelDeclaration',
+              payload: { month, status: declared ? 'CANCELLED' : 'NONE' },
+            });
+            setMessage(
+              declared ? '交通費なしの申告を取り消しました。' : '交通費なしを申告しました。',
+            );
+          } catch (e) {
+            setMessage((e as Error).message);
+          }
+        }}
+      >
+        {declared ? '交通費なしの申告を取り消す' : 'この月は交通費なしと申告'}
+      </Button>
+      <Notice text={message} />
+    </div>
   );
 }

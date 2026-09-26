@@ -170,6 +170,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ? {
           rewardPrivate: [],
           paymentStatements: [],
+          paymentRevisions: [],
+          aiFeeSettings: [],
+          travelDeclarations: state.travelDeclarations.filter((d) => d.userId === user.id),
           travelClaims: state.travelClaims.filter((c) => c.userId === user.id),
         }
       : {}),

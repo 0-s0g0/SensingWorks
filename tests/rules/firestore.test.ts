@@ -597,12 +597,22 @@ it('allows own travel claims and templates, management reads, and blocks other u
     parkingFee: 500,
   };
   await assertSucceeds(
-    saveAction(state, { type: 'travelClaim', payload: { item } }, team, as(team.id) as unknown as Firestore),
+    saveAction(
+      state,
+      { type: 'travelClaim', payload: { item } },
+      team,
+      as(team.id) as unknown as Firestore,
+    ),
   );
   const { date, status, ...route } = item;
   const template = { ...route, id: `${team.id}_通勤`, name: '通勤' };
   await assertSucceeds(
-    saveAction(state, { type: 'travelTemplate', payload: { item: template } }, team, as(team.id) as unknown as Firestore),
+    saveAction(
+      state,
+      { type: 'travelTemplate', payload: { item: template } },
+      team,
+      as(team.id) as unknown as Firestore,
+    ),
   );
   await assertSucceeds(getDoc(doc(as(owner.id), 'travelClaims', item.id)));
   await assertSucceeds(getDocs(collection(as(owner.id), 'travelClaims')));
@@ -631,4 +641,148 @@ it('allows own travel claims and templates, management reads, and blocks other u
       as(owner.id) as unknown as Firestore,
     ),
   );
+});
+
+it('protects recurring AI fees and persists through saveAction', async () => {
+  const state = createSeed();
+  const owner = state.users.find((u) => u.role === 'OWNER')!;
+  const db = as(owner.id);
+  await saveAction(
+    state,
+    { type: 'aiFeeSetting', payload: { item: { id: 'demo-aoki', monthlyFee: 3000 } } },
+    owner,
+    db as unknown as Firestore,
+  );
+  expect((await getDoc(doc(db, 'aiFeeSettings', 'demo-aoki'))).data()).toEqual({
+    monthlyFee: 3000,
+  });
+  await assertFails(getDoc(doc(as('demo-aoki'), 'aiFeeSettings', 'demo-aoki')));
+  await assertFails(getDocs(collection(as('demo-aoki'), 'aiFeeSettings')));
+  await assertFails(setDoc(doc(as('demo-aoki'), 'aiFeeSettings', 'demo-aoki'), { monthlyFee: 1 }));
+  await assertFails(setDoc(doc(db, 'aiFeeSettings', 'missing'), { monthlyFee: 1 }));
+  for (const monthlyFee of [-1, 1.5, 100000001]) {
+    await assertFails(updateDoc(doc(db, 'aiFeeSettings', 'demo-aoki'), { monthlyFee }));
+  }
+  await assertFails(updateDoc(doc(db, 'aiFeeSettings', 'demo-aoki'), { extra: true }));
+});
+
+it('limits no-travel declarations to the person and atomically cancels them when a claim is saved', async () => {
+  const state = createSeed();
+  const actor = state.users.find((u) => u.id === 'demo-aoki')!;
+  const db = as(actor.id);
+  const action = {
+    type: 'travelDeclaration' as const,
+    payload: { month: '2026-09', status: 'NONE' },
+  };
+  await saveAction(state, action, actor, db as unknown as Firestore);
+  const target = doc(db, 'travelDeclarations', 'demo-aoki_2026-09');
+  expect((await getDoc(target)).data()?.status).toBe('NONE');
+  await assertFails(getDoc(doc(as('demo-tanaka'), 'travelDeclarations', 'demo-aoki_2026-09')));
+  await assertFails(
+    setDoc(doc(as('demo-tanaka'), 'travelDeclarations', 'demo-aoki_2026-09'), {
+      userId: actor.id,
+      month: '2026-09',
+      status: 'NONE',
+    }),
+  );
+  await assertFails(
+    setDoc(doc(db, 'travelDeclarations', 'demo-aoki_2026-13'), {
+      userId: actor.id,
+      month: '2026-13',
+      status: 'NONE',
+    }),
+  );
+  await assertSucceeds(getDoc(doc(as('demo-owner'), 'travelDeclarations', 'demo-aoki_2026-09')));
+  const item = {
+    id: 'demo-aoki_2026-09-24',
+    userId: actor.id,
+    date: '2026-09-24',
+    status: 'SUBMITTED' as const,
+    departure: '自宅',
+    arrival: '研究室',
+    trip: 'ONE_WAY' as const,
+    busFare: 200,
+    trainFare: 0,
+    parkingFee: 0,
+  };
+  await assertFails(setDoc(doc(db, 'travelClaims', item.id), body(item)));
+  const next = transition(state, action, actor);
+  // Use persisted logs so the transaction's optimistic checks see the same documents.
+  next.activityLogs = (await getDocs(collection(db, 'activityLogs'))).docs.map(
+    (d) => ({ ...d.data(), id: d.id }) as State['activityLogs'][number],
+  );
+  await saveAction(
+    next,
+    { type: 'travelClaim', payload: { item } },
+    actor,
+    db as unknown as Firestore,
+  );
+  expect((await getDoc(target)).data()?.status).toBe('CANCELLED');
+  expect((await getDoc(doc(db, 'travelClaims', item.id))).data()?.busFare).toBe(200);
+});
+
+it('atomically saves payment revisions, rejects forged metadata and protects history from edits', async () => {
+  const state = createSeed();
+  const actor = state.users.find((u) => u.role === 'OWNER')!;
+  const db = as(actor.id);
+  const item = {
+    id: 'demo-aoki_2026-09-01_2026-09-30',
+    userId: 'demo-aoki',
+    periodStart: '2026-09-01',
+    periodEnd: '2026-09-30',
+    aiFee: 3000,
+    travelCost: 1200,
+    pointRate: 100,
+    variableCap: 10000,
+    amountMode: 'manual' as const,
+    manualAmount: 40000,
+    changeReason: '追加の作業を反映',
+  };
+  await saveAction(
+    state,
+    { type: 'payment', payload: { item } },
+    actor,
+    db as unknown as Firestore,
+  );
+  const target = doc(db, 'paymentStatements', item.id);
+  const history = doc(db, 'paymentRevisions', `${item.id}_v1`);
+  const saved = (await getDoc(target)).data()!;
+  expect(saved.calculation.workAmount).toBe(40000);
+  expect(saved.calculation.total).toBe(44200);
+  expect((await getDoc(history)).data()?.after).toEqual(saved);
+  await assertFails(updateDoc(target, { manualAmount: 45000 }));
+  await assertFails(updateDoc(target, { updatedBy: 'demo-aoki' }));
+  await assertFails(updateDoc(history, { before: {} }));
+  await assertFails(deleteDoc(history));
+  await assertFails(getDocs(collection(as('demo-aoki'), 'paymentRevisions')));
+  await assertFails(
+    setDoc(target, {
+      userId: item.userId,
+      periodStart: item.periodStart,
+      periodEnd: item.periodEnd,
+      aiFee: 0,
+      travelCost: 0,
+      pointRate: 1,
+      variableCap: 100,
+    }),
+  );
+  const next = { ...state, paymentStatements: [{ ...saved, id: item.id }] } as State;
+  next.paymentRevisions = [
+    { ...(await getDoc(history)).data(), id: `${item.id}_v1` },
+  ] as State['paymentRevisions'];
+  next.activityLogs = (await getDocs(collection(db, 'activityLogs'))).docs.map(
+    (d) => ({ ...d.data(), id: d.id }) as State['activityLogs'][number],
+  );
+  await saveAction(
+    next,
+    {
+      type: 'payment',
+      payload: { item: { ...item, manualAmount: 0, changeReason: '今月は支給なし' } },
+    },
+    actor,
+    db as unknown as Firestore,
+  );
+  const second = (await getDoc(doc(db, 'paymentRevisions', `${item.id}_v2`))).data()!;
+  expect(second.before).toEqual(saved);
+  expect(second.after.calculation.total).toBe(4200);
 });

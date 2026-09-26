@@ -183,7 +183,10 @@ export function initialProject(): State {
   return {
     ...structuredClone(petPocInitial),
     paymentStatements: [],
+    paymentRevisions: [],
+    aiFeeSettings: [],
     travelClaims: [],
+    travelDeclarations: [],
     travelTemplates: [],
   } as State;
 }

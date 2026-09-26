@@ -96,12 +96,19 @@ export function subscribeWorkspace(
 ): Unsubscribe {
   if (!db) return () => {};
   const keys = canManage({ role })
-    ? [...collections, 'rewardPrivate' as const, 'paymentStatements' as const]
+    ? [
+        ...collections,
+        'rewardPrivate' as const,
+        'paymentStatements' as const,
+        'paymentRevisions' as const,
+        'aiFeeSettings' as const,
+      ]
     : [...collections];
-  keys.push('travelClaims', 'travelTemplates');
+  keys.push('travelClaims', 'travelTemplates', 'travelDeclarations');
   const unsub = keys.map((key) => {
     const target =
-      key === 'travelTemplates' || (key === 'travelClaims' && !canManage({ role }))
+      key === 'travelTemplates' ||
+      (['travelClaims', 'travelDeclarations'].includes(key) && !canManage({ role }))
         ? query(collection(db!, key), where('userId', '==', userId))
         : key === 'activityLogs'
           ? query(collection(db!, key), orderBy('createdAt', 'desc'), limit(100))

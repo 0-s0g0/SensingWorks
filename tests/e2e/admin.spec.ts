@@ -14,7 +14,9 @@ test('Admin can manage without appearing among participants', async ({ page }) =
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '管理専用ワークスペース' })).toBeVisible();
   await page.getByRole('link', { name: '管理', exact: true }).click();
+  await page.getByRole('tab', { name: 'アカウント設定' }).click();
   await expect(page.getByRole('heading', { name: 'セッション管理・ログイン履歴' })).toBeVisible();
+  await page.getByRole('tab', { name: /申請・レビュー/ }).click();
   await expect(
     page.getByRole('region', { name: '週報マトリックス（横スクロール）' }),
   ).not.toContainText('管理専用ユーザー');

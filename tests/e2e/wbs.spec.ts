@@ -88,6 +88,7 @@ test('Team changes another mission assignees through avatars and Owner sees sess
   await expect(page.getByTestId('mission-2.3').getByRole('img', { name: '佐藤 蓮' })).toBeVisible();
   await page.getByLabel('デモユーザー切替').selectOption({ label: '高橋 直樹 / Owner' });
   await page.getByRole('link', { name: '管理', exact: true }).click();
+  await page.getByRole('tab', { name: 'アカウント設定' }).click();
   await expect(page.getByRole('heading', { name: 'セッション管理・ログイン履歴' })).toBeVisible();
 });
 

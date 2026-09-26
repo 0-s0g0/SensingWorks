@@ -4,37 +4,52 @@ import { useState } from 'react';
 import { endOfMonth, startOfMonth } from 'date-fns';
 import { useStore } from '@/lib/store';
 import { isParticipant, yen } from '@/lib/domain';
-import { calculatePayment, type PaymentStatement } from '@/lib/payment';
+import {
+  calculatePayment,
+  defaultAmountMode,
+  hasManualAmount,
+  type PaymentStatement,
+} from '@/lib/payment';
 import { format, jstDate } from '@/lib/time';
 import { Button } from './ui/button';
 import { Field, Notice } from './ui/primitives';
-export function PaymentStatements() {
+export function PaymentStatements({ month, personId }: { month?: string; personId?: string }) {
   const { state } = useStore();
   const people = state.users.filter(isParticipant);
   const [selected, setSelected] = useState('');
-  const userId = selected || people[0]?.id || '';
+  const userId = personId || selected || people[0]?.id || '';
   return (
     <section className="panel detail-section">
       <h2>AI電磁波・個人別支払明細</h2>
       <p>個人・期間ごとに費用を保存し、Word形式で出力できます。</p>
-      <Field label="明細の対象者">
-        <select value={userId} onChange={(e) => setSelected(e.target.value)}>
-          {people.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name}
-              {u.active ? '' : '（無効）'}
-            </option>
-          ))}
-        </select>
-      </Field>
-      {userId ? <PaymentEditor key={userId} userId={userId} /> : <p>対象者がいません。</p>}
+      {!personId && (
+        <Field label="明細の対象者">
+          <select value={userId} onChange={(e) => setSelected(e.target.value)}>
+            {people.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+                {u.active ? '' : '（無効）'}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {userId ? (
+        <PaymentEditor key={userId + month} userId={userId} month={month} />
+      ) : (
+        <p>対象者がいません。</p>
+      )}
     </section>
   );
 }
-function PaymentEditor({ userId }: { userId: string }) {
+function PaymentEditor({ userId, month }: { userId: string; month?: string }) {
   const { state, act, busy } = useStore();
-  const [start, setStart] = useState(format(startOfMonth(jstDate()), 'yyyy-MM-dd'));
-  const [end, setEnd] = useState(format(endOfMonth(jstDate()), 'yyyy-MM-dd'));
+  const [start, setStart] = useState(
+    format(startOfMonth(jstDate(month ? `${month}-01` : undefined)), 'yyyy-MM-dd'),
+  );
+  const [end, setEnd] = useState(
+    format(endOfMonth(jstDate(month ? `${month}-01` : undefined)), 'yyyy-MM-dd'),
+  );
   const id = `${userId}_${start}_${end}`;
   const saved = state.paymentStatements.find((p) => p.id === id);
   return (
@@ -55,10 +70,13 @@ function PaymentEditor({ userId }: { userId: string }) {
             userId,
             periodStart: start,
             periodEnd: end,
-            aiFee: 0,
-            travelCost: 0,
+            aiFee: state.aiFeeSettings.find((s) => s.id === userId)?.monthlyFee ?? 0,
+            travelCost: submittedTravelTotal(state.travelClaims, userId, start, end),
             pointRate: 0,
             variableCap: 0,
+            amountMode: defaultAmountMode(state.users.find((u) => u.id === userId)!.role),
+            manualAmount: null,
+            changeReason: '',
           }
         }
         busy={busy}
@@ -88,6 +106,7 @@ function PaymentEditor({ userId }: { userId: string }) {
             ))}
         </select>
       </Field>
+      <PaymentHistory statementId={id} />
     </>
   );
 }
@@ -121,7 +140,12 @@ function PaymentForm({
       const blob = download
         ? await (
             await import('@/lib/payment-docx')
-          ).paymentDocx(item, name, outputDate, state.pointAwards)
+          ).paymentDocx(
+            { ...item, calculation: calculatePayment(item, state.pointAwards) },
+            name,
+            outputDate,
+            state.pointAwards,
+          )
         : null;
       await save(item);
       if (blob) {
@@ -146,6 +170,64 @@ function PaymentForm({
         void submit((e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'word');
       }}
     >
+      <fieldset className="payment-mode">
+        <legend>今月の作業報酬</legend>
+        <label>
+          <input
+            type="radio"
+            name="amount-mode"
+            checked={(item.amountMode ?? 'points') === 'points'}
+            onChange={() =>
+              setItem({ ...item, amountMode: 'points', manualAmount: null, changeReason: '' })
+            }
+          />
+          ポイントから自動計算
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="amount-mode"
+            checked={item.amountMode === 'manual'}
+            onChange={() =>
+              setItem({ ...item, amountMode: 'manual', manualAmount: null, changeReason: '' })
+            }
+          />
+          手動で金額を設定
+        </label>
+      </fieldset>
+      {item.amountMode === 'manual' && (
+        <Field label="手動設定する作業報酬（円）">
+          <input
+            type="number"
+            min={0}
+            max={100000000}
+            step={1}
+            value={
+              item.manualAmount == null || Number.isNaN(item.manualAmount) ? '' : item.manualAmount
+            }
+            placeholder="未入力ならポイントから計算"
+            onChange={(e) =>
+              setItem({
+                ...item,
+                manualAmount: e.target.value === '' ? null : e.target.valueAsNumber,
+              })
+            }
+          />
+        </Field>
+      )}
+      <Field label="変更理由">
+        <textarea
+          aria-label="変更理由"
+          maxLength={1000}
+          required={hasManualAmount(item)}
+          value={item.changeReason ?? ''}
+          placeholder="例：今月のリーダー業務を含めて調整"
+          onChange={(e) => setItem({ ...item, changeReason: e.target.value })}
+        />
+      </Field>
+      <p>
+        AI利用料と交通費は、作業報酬に別途加算します。手動金額が未入力の場合はポイント計算額を採用します。0円の指定もできます。
+      </p>
       <div className="form-grid">
         <Field label="出力日">
           <input
@@ -176,6 +258,24 @@ function PaymentForm({
           </Field>
         ))}
       </div>
+      <p>
+        現在の月額AI利用料：
+        {yen(state.aiFeeSettings.find((s) => s.id === item.userId)?.monthlyFee ?? 0)}
+        （本人への支払いに加算）
+      </p>
+      <Button
+        type="button"
+        variant="outline"
+        disabled={busy || working}
+        onClick={() =>
+          setItem({
+            ...item,
+            aiFee: state.aiFeeSettings.find((s) => s.id === item.userId)?.monthlyFee ?? 0,
+          })
+        }
+      >
+        月額AI利用料を明細に反映
+      </Button>
       <p>
         対象期間の申請済み交通費：
         {yen(
@@ -209,8 +309,18 @@ function PaymentForm({
         <div aria-label="支払明細プレビュー">
           <p>承認済みポイント：{result.points} pt（日本時間・開始日と終了日を含む）</p>
           <p>
-            変動費：{yen(result.rawVariable)} → 上限適用後 {yen(result.variable)}
+            ポイント計算額：{yen(result.rawVariable)} → 上限適用後 {yen(result.variable)}
           </p>
+          <p>
+            採用する作業報酬：{yen(result.workAmount)}（
+            {hasManualAmount(item) ? '手動設定' : 'ポイント計算'}）
+          </p>
+          {initial.calculation && initial.calculation.points !== result.points && (
+            <p>
+              保存時点は{initial.calculation.points} ptです。再保存すると現在の{result.points}{' '}
+              ptで明細を更新します。
+            </p>
+          )}
           <p>
             <strong>支払合計：{yen(result.total)}</strong>
           </p>
@@ -226,5 +336,75 @@ function PaymentForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+function PaymentHistory({ statementId }: { statementId: string }) {
+  const { state } = useStore();
+  const entries = state.paymentRevisions
+    .filter((r) => r.statementId === statementId)
+    .sort((a, b) => (b.after.revision ?? 0) - (a.after.revision ?? 0));
+  return (
+    <section className="payment-history">
+      <h3>変更履歴</h3>
+      {!entries.length && <p>記録された変更履歴はありません。次回保存時から記録します。</p>}
+      {entries.map((entry) => (
+        <details key={entry.id}>
+          <summary>
+            第{entry.after.revision}版 ·{' '}
+            {entry.after.updatedAt
+              ? format(entry.after.updatedAt, 'yyyy/MM/dd HH:mm:ss')
+              : '日時不明'}{' '}
+            · {yen(entry.after.calculation?.total ?? 0)}
+          </summary>
+          <p>
+            変更者：
+            {state.users.find((u) => u.id === entry.after.updatedBy)?.name ??
+              entry.after.updatedBy}{' '}
+            / 保存時のロール：{entry.after.roleAtSave}
+          </p>
+          <p>理由：{entry.after.changeReason}</p>
+          <p>
+            金額決定方法：
+            {entry.after.amountMode === 'manual' && entry.after.manualAmount != null
+              ? '手動設定'
+              : 'ポイント計算'}{' '}
+            / 手動設定額：
+            {entry.after.manualAmount != null ? yen(entry.after.manualAmount) : '未設定'}
+          </p>
+          <p>
+            保存時点：{entry.after.calculation?.points} pt × {yen(entry.after.pointRate)}
+            、ポイント計算額 {yen(entry.after.calculation?.rawVariable ?? 0)} → 上限適用後{' '}
+            {yen(entry.after.calculation?.variable ?? 0)}
+          </p>
+          <p>
+            作業報酬：{yen(entry.after.calculation?.workAmount ?? 0)} ＋ AI利用料{' '}
+            {yen(entry.after.aiFee)} ＋ 交通費 {yen(entry.after.travelCost)} ＝ 支払合計{' '}
+            {yen(entry.after.calculation?.total ?? 0)}
+          </p>
+          {entry.before ? (
+            <div>
+              <h4>変更前の明細</h4>
+              <p>
+                AI利用料 {yen(entry.before.aiFee)} / 交通費 {yen(entry.before.travelCost)} / 単価{' '}
+                {yen(entry.before.pointRate)} / 上限 {yen(entry.before.variableCap)}
+              </p>
+              {entry.before.calculation ? (
+                <p>
+                  ポイント計算額 {yen(entry.before.calculation.rawVariable)} / 作業報酬{' '}
+                  {yen(entry.before.calculation.workAmount)} / 支払合計{' '}
+                  {yen(entry.before.calculation.total)}
+                </p>
+              ) : (
+                <p>旧形式の明細のため、保存時点のポイント・支払合計の記録はありません。</p>
+              )}
+              <p>変更理由：{entry.before.changeReason || '記録なし'}</p>
+            </div>
+          ) : (
+            <p>新規作成</p>
+          )}
+        </details>
+      ))}
+    </section>
   );
 }

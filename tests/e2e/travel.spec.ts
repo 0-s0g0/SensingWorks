@@ -42,7 +42,10 @@ test('Team saves a route, reuses it across days, and management applies submitte
     state.users.find((u) => u.role === 'OWNER')!.id,
   );
   await page.goto('/admin');
-  await page.getByLabel('明細の対象者').selectOption('demo-aoki');
+  await page
+    .getByRole('table', { name: '月末精算一覧' })
+    .getByRole('button', { name: new RegExp(state.users.find((u) => u.id === 'demo-aoki')!.name) })
+    .click();
   await page.getByLabel('対象期間の開始日').fill('2026-09-01');
   await page.getByLabel('対象期間の終了日').fill('2026-09-30');
   await page.getByRole('button', { name: '申請済み交通費を明細に反映' }).click();

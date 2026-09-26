@@ -1,5 +1,10 @@
 import { validateClaim, validateRoute, type TravelClaim, type TravelTemplate } from './travel';
-import { validatePayment, type PaymentStatement } from './payment';
+import {
+  validPaymentDate,
+  preparePayment,
+  type PaymentStatement,
+  type PaymentRevision,
+} from './payment';
 import { addDays, startOfWeek } from 'date-fns';
 import { format, jstDate } from './time';
 export type Status =
@@ -125,7 +130,10 @@ export type State = {
   pointAwards: PointAward[];
   rewardPrivate: RewardPrivate[];
   paymentStatements: PaymentStatement[];
+  paymentRevisions: PaymentRevision[];
+  aiFeeSettings: { id: string; monthlyFee: number }[];
   travelClaims: TravelClaim[];
+  travelDeclarations: { id: string; userId: string; month: string; status: 'NONE' | 'CANCELLED' }[];
   travelTemplates: TravelTemplate[];
   activityLogs: ActivityLog[];
 };
@@ -142,7 +150,9 @@ export type Action = {
     | 'report'
     | 'availability'
     | 'paid'
+    | 'aiFeeSetting'
     | 'payment'
+    | 'travelDeclaration'
     | 'travelClaim'
     | 'travelTemplate';
   payload: Record<string, unknown>;
@@ -194,7 +204,10 @@ export const emptyState = (): State => ({
   pointAwards: [],
   rewardPrivate: [],
   paymentStatements: [],
+  paymentRevisions: [],
+  aiFeeSettings: [],
   travelClaims: [],
+  travelDeclarations: [],
   travelTemplates: [],
   activityLogs: [],
 });
@@ -281,11 +294,32 @@ export function transition(state: State, action: Action, actor: Profile): State 
     if (!m.assigneeIds.includes(actor.id)) throw Error('担当者のみ操作できます。');
   };
   switch (action.type) {
+    case 'travelDeclaration': {
+      const month = String(p.month ?? '');
+      if (!isParticipant(actor) || !validPaymentDate(`${month}-01`))
+        throw Error('対象月を確認してください。');
+      if (!['NONE', 'CANCELLED'].includes(String(p.status))) throw Error('申告状態が不正です。');
+      if (
+        p.status === 'NONE' &&
+        s.travelClaims.some((c) => c.userId === actor.id && c.date.startsWith(`${month}-`))
+      )
+        throw Error('この月には交通費の記録があります。下書きも確認してください。');
+      const id = `${actor.id}_${month}`;
+      s.travelDeclarations = [
+        ...s.travelDeclarations.filter((d) => d.id !== id),
+        { id, userId: actor.id, month, status: p.status as 'NONE' | 'CANCELLED' },
+      ];
+      break;
+    }
     case 'travelClaim': {
       const item = p.item as TravelClaim;
       if (!isParticipant(actor) || item.userId !== actor.id)
         throw Error('自分の交通費のみ保存できます。');
       validateClaim(item);
+      const declaration = s.travelDeclarations.find(
+        (d) => d.userId === actor.id && d.month === item.date.slice(0, 7),
+      );
+      if (declaration) declaration.status = 'CANCELLED';
       s.travelClaims = [...s.travelClaims.filter((c) => c.id !== item.id), item];
       break;
     }
@@ -305,13 +339,40 @@ export function transition(state: State, action: Action, actor: Profile): State 
       s.travelTemplates = [...s.travelTemplates.filter((c) => c.id !== item.id), item];
       break;
     }
+    case 'aiFeeSetting': {
+      owner();
+      const item = p.item as { id: string; monthlyFee: number };
+      integer(item.monthlyFee, '月額AI利用料');
+      if (!s.users.some((u) => u.id === item.id && isParticipant(u)))
+        throw Error('対象者が見つかりません。');
+      s.aiFeeSettings = [
+        ...s.aiFeeSettings.filter((x) => x.id !== item.id),
+        { id: item.id, monthlyFee: item.monthlyFee },
+      ];
+      break;
+    }
     case 'payment': {
       owner();
       const item = p.item as PaymentStatement;
-      validatePayment(item);
-      if (!s.users.some((u) => u.id === item.userId && isParticipant(u)))
-        throw Error('対象者が見つかりません。');
-      s.paymentStatements = [...(s.paymentStatements ?? []).filter((x) => x.id !== item.id), item];
+      const person = s.users.find((u) => u.id === item.userId && isParticipant(u));
+      if (!person) throw Error('対象者が見つかりません。');
+      const previous = s.paymentStatements.find((x) => x.id === item.id);
+      const saved = preparePayment(
+        item,
+        s.pointAwards,
+        person.role,
+        actor.id,
+        now,
+        (previous?.revision ?? 0) + 1,
+      );
+      const withoutId = ({ id: _id, ...data }: PaymentStatement) => data;
+      s.paymentRevisions.push({
+        id: `${saved.id}_v${saved.revision}`,
+        statementId: saved.id,
+        before: previous ? withoutId(previous) : null,
+        after: withoutId(saved),
+      });
+      s.paymentStatements = [...s.paymentStatements.filter((x) => x.id !== item.id), saved];
       break;
     }
     case 'schedule': {
@@ -742,7 +803,9 @@ export function transition(state: State, action: Action, actor: Profile): State 
       availability: 'MID.予定を更新',
       paid: '支払済みを記録',
       payment: '支払明細を保存',
+      aiFeeSetting: '月額AI利用料を設定',
       travelClaim: '交通費申請を保存',
+      travelDeclaration: '交通費なしの申告を更新',
       travelTemplate: '交通費の経路を保存',
     }[action.type],
     createdAt: now,

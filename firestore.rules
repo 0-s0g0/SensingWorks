@@ -177,6 +177,21 @@ service cloud.firestore {
     && validInt(d.busFare) && d.busFare <= 1000000 && validInt(d.trainFare) && d.trainFare <= 1000000 && validInt(d.parkingFee) && d.parkingFee <= 1000000;
   }
   function ownTravel(d) { return member() && d.userId == request.auth.uid && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['TEAM','OWNER']; }
+  function noTravelDeclarationCleared(d) {
+   let month = d.date.split('-')[0]+'-'+d.date.split('-')[1];
+   let path = /databases/$(database)/documents/travelDeclarations/$(request.auth.uid+'_'+month);
+   return !existsAfter(path) || getAfter(path).data.status == 'CANCELLED';
+  }
+  match /travelDeclarations/{id} {
+   allow read: if owner() || (member() && resource.data.userId == request.auth.uid);
+   allow get: if member() && !exists(/databases/$(database)/documents/travelDeclarations/$(id)) && id.matches(request.auth.uid+'_[0-9]{4}-[0-9]{2}');
+   allow create, update: if ownTravel(request.resource.data)
+    && request.resource.data.keys().hasOnly(['userId','month','status'])
+    && request.resource.data.month.matches('[0-9]{4}-(0[1-9]|1[0-2])')
+    && id == request.auth.uid+'_'+request.resource.data.month
+    && request.resource.data.status in ['NONE','CANCELLED'];
+   allow delete: if false;
+  }
   match /travelClaims/{id} {
    allow read: if owner() || (member() && resource.data.userId == request.auth.uid);
    allow create, update: if ownTravel(request.resource.data)
@@ -184,7 +199,8 @@ service cloud.firestore {
     && travelRoute(request.resource.data)
     && request.resource.data.date.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
     && id == request.auth.uid+'_'+request.resource.data.date
-    && request.resource.data.status in ['DRAFT','SUBMITTED'];
+    && request.resource.data.status in ['DRAFT','SUBMITTED']
+    && noTravelDeclarationCleared(request.resource.data);
    // A transaction also reads an absent document before creating it.
    allow get: if member() && !exists(/databases/$(database)/documents/travelClaims/$(id)) && id.matches(request.auth.uid+'_[0-9]{4}-[0-9]{2}-[0-9]{2}');
    allow delete: if false;
@@ -198,18 +214,63 @@ service cloud.firestore {
     && id == request.auth.uid+'_'+request.resource.data.name;
    allow delete: if false;
   }
-  match /paymentStatements/{id} {
+  match /aiFeeSettings/{id} {
    allow read: if owner();
    allow create, update: if owner()
-    && request.resource.data.keys().hasOnly(['userId','periodStart','periodEnd','aiFee','travelCost','pointRate','variableCap'])
-    && get(/databases/$(database)/documents/users/$(request.resource.data.userId)).data.role != 'ADMIN'
-    && request.resource.data.periodStart.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
-    && request.resource.data.periodEnd.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
-    && request.resource.data.periodStart <= request.resource.data.periodEnd
-    && id == request.resource.data.userId+'_'+request.resource.data.periodStart+'_'+request.resource.data.periodEnd
-    && validInt(request.resource.data.aiFee) && validInt(request.resource.data.travelCost)
-    && validInt(request.resource.data.pointRate) && validInt(request.resource.data.variableCap);
+    && request.resource.data.keys().hasOnly(['monthlyFee'])
+    && validInt(request.resource.data.monthlyFee)
+    && get(/databases/$(database)/documents/users/$(id)).data.role != 'ADMIN';
    allow delete: if false;
+  }
+  function paymentBase(id, d) {
+   return get(/databases/$(database)/documents/users/$(d.userId)).data.role != 'ADMIN'
+    && d.periodStart.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
+    && d.periodEnd.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
+    && d.periodStart <= d.periodEnd
+    && id == d.userId+'_'+d.periodStart+'_'+d.periodEnd
+    && validInt(d.aiFee) && validInt(d.travelCost) && validInt(d.pointRate) && validInt(d.variableCap);
+  }
+  function legacyPayment(d) {
+   return d.keys().hasOnly(['userId','periodStart','periodEnd','aiFee','travelCost','pointRate','variableCap']);
+  }
+  function auditedPayment(d) {
+   let c = d.calculation;
+   return d.keys().hasOnly(['userId','periodStart','periodEnd','aiFee','travelCost','pointRate','variableCap','amountMode','manualAmount','changeReason','roleAtSave','calculation','revision','updatedBy','updatedAt'])
+    && d.amountMode in ['points','manual'] && (d.manualAmount == null || (d.amountMode == 'manual' && validInt(d.manualAmount)))
+    && nonEmpty(d.changeReason) && d.changeReason.size() <= 1000
+    && d.roleAtSave == get(/databases/$(database)/documents/users/$(d.userId)).data.role
+    && d.updatedBy == request.auth.uid && d.updatedAt is string && d.updatedAt.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z')
+    && validInt(d.revision) && d.revision > 0
+    && c.keys().hasOnly(['points','rawVariable','variable','workAmount','total'])
+    && c.points is int && c.points >= 0 && c.rawVariable == c.points * d.pointRate && c.rawVariable <= 9007199254740991
+    && c.variable == (c.rawVariable < d.variableCap ? c.rawVariable : d.variableCap)
+    && c.workAmount == (d.amountMode == 'manual' && d.manualAmount != null ? d.manualAmount : c.variable)
+    && c.total == c.workAmount + d.aiFee + d.travelCost;
+  }
+  function linkedPaymentRevision(id, d) {
+   let history = getAfter(/databases/$(database)/documents/paymentRevisions/$(id+'_v'+string(d.revision))).data;
+   let path = /databases/$(database)/documents/paymentStatements/$(id);
+   return history.statementId == id && history.after == d
+    && history.before == (exists(path) ? get(path).data : null);
+  }
+  match /paymentStatements/{id} {
+   allow read: if owner();
+   allow create: if owner() && paymentBase(id, request.resource.data) && (
+    legacyPayment(request.resource.data) || (auditedPayment(request.resource.data) && request.resource.data.revision == 1 && linkedPaymentRevision(id, request.resource.data)));
+   allow update: if owner() && paymentBase(id, request.resource.data) && (
+    (!('revision' in resource.data) && legacyPayment(request.resource.data)) ||
+    (auditedPayment(request.resource.data) && request.resource.data.revision == resource.data.get('revision', 0) + 1 && linkedPaymentRevision(id, request.resource.data)));
+   allow delete: if false;
+  }
+  match /paymentRevisions/{id} {
+   allow read: if owner();
+   allow create: if owner()
+    && request.resource.data.keys().hasOnly(['statementId','before','after'])
+    && id == request.resource.data.statementId+'_v'+string(request.resource.data.after.revision)
+    && request.resource.data.after == getAfter(/databases/$(database)/documents/paymentStatements/$(request.resource.data.statementId)).data
+    && auditedPayment(request.resource.data.after)
+    && request.resource.data.before == (exists(/databases/$(database)/documents/paymentStatements/$(request.resource.data.statementId)) ? get(/databases/$(database)/documents/paymentStatements/$(request.resource.data.statementId)).data : null);
+   allow update, delete: if false;
   }
   match /rewardPrivate/{id} {
    allow read: if owner();
@@ -233,7 +294,7 @@ service cloud.firestore {
   }
   match /activityLogs/{id} {
    allow read: if member();
-   allow create: if member() && request.resource.data.keys().hasOnly(['userId','action','createdAt']) && request.resource.data.userId==request.auth.uid && request.resource.data.action in ['開始日を更新','担当者を変更','中工程を保存','大工程名を更新','参考小工程を更新','中工程を開始','終了報告を保存','終了報告をレビュー','週報を保存','MID.予定を更新','支払済みを記録','支払明細を保存','交通費申請を保存','交通費の経路を保存'];
+   allow create: if member() && request.resource.data.keys().hasOnly(['userId','action','createdAt']) && request.resource.data.userId==request.auth.uid && request.resource.data.action in ['開始日を更新','担当者を変更','中工程を保存','大工程名を更新','参考小工程を更新','中工程を開始','終了報告を保存','終了報告をレビュー','週報を保存','MID.予定を更新','支払済みを記録','支払明細を保存','月額AI利用料を設定','交通費申請を保存','交通費の経路を保存','交通費なしの申告を更新'];
    allow update,delete: if false;
   }
   match /{document=**} { allow read,write: if false; }

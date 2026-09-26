@@ -92,3 +92,29 @@ it('updates named templates without changing historical claims', () => {
   expect(updated.travelTemplates).toHaveLength(1);
   expect(updated.travelClaims[0].busFare).toBe(220);
 });
+
+it('records no-travel months, rejects contradictory declarations and cancels on a new claim', () => {
+  const state = createSeed();
+  const actor = state.users.find((u) => u.id === claim.userId)!;
+  const action = {
+    type: 'travelDeclaration' as const,
+    payload: { month: '2026-09', status: 'NONE' },
+  };
+  const declared = transition(state, action, actor);
+  expect(declared.travelDeclarations[0]).toMatchObject({
+    userId: actor.id,
+    month: '2026-09',
+    status: 'NONE',
+  });
+  const updated = transition(declared, { type: 'travelClaim', payload: { item: claim } }, actor);
+  expect(updated.travelDeclarations[0].status).toBe('CANCELLED');
+  expect(() => transition(updated, action, actor)).toThrow(/記録/);
+  expect(() => transition(state, action, { ...actor, role: 'ADMIN' })).toThrow();
+  expect(() =>
+    transition(state, { ...action, payload: { month: '2026-13', status: 'NONE' } }, actor),
+  ).toThrow();
+  expect(
+    transition(declared, { ...action, payload: { month: '2026-09', status: 'CANCELLED' } }, actor)
+      .travelDeclarations[0].status,
+  ).toBe('CANCELLED');
+});

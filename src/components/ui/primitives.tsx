@@ -99,19 +99,28 @@ export function Modal({
   title,
   children,
   close,
+  drawer = false,
 }: {
   title: string;
   children: ReactNode;
   close: () => void;
+  drawer?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    ref.current?.showModal();
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const dialog = ref.current;
+    dialog?.showModal();
+    return () => {
+      dialog?.close();
+      previousFocus?.focus();
+    };
   }, []);
   return (
     <dialog
       ref={ref}
-      className="modal"
+      className={drawer ? 'modal detail-drawer' : 'modal'}
+      aria-label={title}
       onCancel={close}
       onClick={(e) => {
         if (e.target === ref.current) close();

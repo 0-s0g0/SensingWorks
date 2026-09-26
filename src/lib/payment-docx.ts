@@ -11,7 +11,12 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
-import { calculatePayment, type PaymentStatement, validPaymentDate } from './payment';
+import {
+  savedPaymentResult,
+  hasManualAmount,
+  type PaymentStatement,
+  validPaymentDate,
+} from './payment';
 import { type PointAward, yen } from './domain';
 export async function paymentDocx(
   p: PaymentStatement,
@@ -20,12 +25,12 @@ export async function paymentDocx(
   awards: PointAward[],
 ) {
   if (!validPaymentDate(outputDate)) throw Error('出力日を確認してください。');
-  const c = calculatePayment(p, awards);
+  const c = savedPaymentResult(p, awards);
   const rows = [
     ['項目', '金額'],
     ['AI利用料（定額）', yen(p.aiFee)],
     ['交通費', yen(p.travelCost)],
-    ['変動費', yen(c.variable)],
+    [hasManualAmount(p) ? '作業報酬（手動設定）' : '作業報酬（ポイント計算）', yen(c.workAmount)],
     ['支払合計', yen(c.total)],
   ];
   const border = { style: BorderStyle.SINGLE, size: 4, color: 'D9D9D9' };
@@ -89,12 +94,23 @@ export async function paymentDocx(
                 }),
             ),
           }),
-          new Paragraph({ text: '変動費の計算', spacing: { before: 320, after: 160 } }),
+          new Paragraph({ text: '作業報酬の計算・調整', spacing: { before: 320, after: 160 } }),
           new Paragraph(`対象期間の承認済みポイント：${c.points.toLocaleString('ja-JP')} pt`),
           new Paragraph(
             `計算額：${c.points.toLocaleString('ja-JP')} pt × ${yen(p.pointRate)} / pt ＝ ${yen(c.rawVariable)}`,
           ),
-          new Paragraph(`上限額：${yen(p.variableCap)}　適用後：${yen(c.variable)}`),
+          new Paragraph(
+            `上限額：${yen(p.variableCap)}　ポイント計算額（上限適用後）：${yen(c.variable)}`,
+          ),
+          new Paragraph(
+            `採用する作業報酬：${yen(c.workAmount)}（${hasManualAmount(p) ? '手動設定' : 'ポイント計算'}）`,
+          ),
+          ...(p.changeReason ? [new Paragraph(`変更理由：${p.changeReason}`)] : []),
+          new Paragraph(
+            p.calculation
+              ? 'ポイント・金額は明細の保存時点の記録です。'
+              : '旧形式の明細のため、現在のポイントから計算しています。',
+          ),
           new Paragraph('ポイントは承認日を日本時間で集計し、対象期間の開始日・終了日を含みます。'),
         ],
       },
