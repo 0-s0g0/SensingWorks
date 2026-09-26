@@ -248,3 +248,29 @@ it('management-only Admin manages work but cannot be assigned or submit weekly r
   expect(() => transition(s, { type: 'report', payload: {} }, admin)).toThrow();
   expect(() => transition(s, { type: 'availability', payload: { userId: admin.id, cells: [] } }, admin)).toThrow();
 });
+
+it('accepts MID slots through 23:00–midnight and rejects hours outside 9–23', () => {
+  const state = createSeed();
+  const actor = state.users[0];
+  const action = (hour: number) => ({
+    type: 'availability' as const,
+    payload: { userId: actor.id, cells: [{ date: '2026-09-25', hour, status: 'AVAILABLE' }] },
+  });
+  expect(transition(state, action(23), actor).availability).toContainEqual({
+    id: `${actor.id}_2026-09-25_23`,
+    userId: actor.id,
+    date: '2026-09-25',
+    hour: 23,
+    status: 'AVAILABLE',
+  });
+  for (const hour of [8, 24]) expect(() => transition(state, action(hour), actor)).toThrow(/時間/);
+});
+
+it('prevents ADMIN from editing or clearing another participant MID schedule', () => {
+  const state = createSeed();
+  const admin = { id: 'admin', name: 'Admin', role: 'ADMIN' as const, active: true };
+  state.users.push(admin);
+  for (const status of ['AVAILABLE', null]) {
+    expect(() => transition(state, { type: 'availability', payload: { userId: state.users[0].id, cells: [{ date: '2026-09-25', hour: 23, status }] } }, admin)).toThrow(/閲覧専用/);
+  }
+});

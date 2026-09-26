@@ -1,5 +1,5 @@
 'use client';
-import { isParticipant } from '@/lib/domain';
+import { compareUsers, isParticipant } from '@/lib/domain';
 import { useState } from 'react';
 import { ChevronDown, UserRound } from 'lucide-react';
 import { useStore } from '@/lib/store';
@@ -13,9 +13,9 @@ export function AssigneePicker({ item }: { item: WbsItem }) {
   const [ids, setIds] = useState(item.assigneeIds);
   const [primary, setPrimary] = useState(item.primaryId);
   const [error, setError] = useState('');
-  const participantIds = item.assigneeIds.filter(
-    (id) => state.users.find((u) => u.id === id)?.role !== 'ADMIN',
-  );
+  const participantIds = state.users
+    .filter((u) => isParticipant(u) && item.assigneeIds.includes(u.id))
+    .map((u) => u.id);
   const locked = ['REPORT_SUBMITTED', 'REVIEW', 'COMPLETED'].includes(item.status);
   return (
     <>
@@ -91,11 +91,14 @@ export function AssigneePicker({ item }: { item: WbsItem }) {
             <Field label="主担当">
               <select value={primary ?? ''} onChange={(e) => setPrimary(e.target.value || null)}>
                 {!ids.length && <option value="">未担当</option>}
-                {ids.map((id) => (
-                  <option key={id} value={id}>
-                    {state.users.find((u) => u.id === id)?.name}
-                  </option>
-                ))}
+                {state.users
+                  .filter((u) => ids.includes(u.id))
+                  .sort(compareUsers)
+                  .map(({ id }) => (
+                    <option key={id} value={id}>
+                      {state.users.find((u) => u.id === id)?.name}
+                    </option>
+                  ))}
               </select>
             </Field>
             <Button

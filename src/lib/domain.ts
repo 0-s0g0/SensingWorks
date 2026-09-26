@@ -23,7 +23,15 @@ export type Profile = {
   name: string;
   role: 'TEAM' | 'LEADER' | 'OWNER' | 'ADMIN';
   active: boolean;
+  userNumber?: number | null;
 };
+export function compareUsers(a: Profile, b: Profile) {
+  return (
+    (a.userNumber ?? Number.MAX_SAFE_INTEGER) - (b.userNumber ?? Number.MAX_SAFE_INTEGER) ||
+    a.name.localeCompare(b.name, 'ja') ||
+    a.id.localeCompare(b.id)
+  );
+}
 export const canManage = (user: Pick<Profile, 'role'>) =>
   user.role === 'OWNER' || user.role === 'ADMIN';
 export const isParticipant = (user: Profile) => user.role !== 'ADMIN';
@@ -151,6 +159,7 @@ export type Action = {
     | 'availability'
     | 'paid'
     | 'aiFeeSetting'
+    | 'userNumber'
     | 'payment'
     | 'travelDeclaration'
     | 'travelClaim'
@@ -338,6 +347,19 @@ export function transition(state: State, action: Action, actor: Profile): State 
       )
         throw Error('経路名は / を含まない100文字以内で入力してください。');
       s.travelTemplates = [...s.travelTemplates.filter((c) => c.id !== item.id), item];
+      break;
+    }
+    case 'userNumber': {
+      owner();
+      const person = s.users.find((u) => u.id === p.userId);
+      if (!person) throw Error('対象メンバーがいません。');
+      const number = p.userNumber;
+      if (
+        number !== null &&
+        (typeof number !== 'number' || !Number.isInteger(number) || number < 1 || number > 999999)
+      )
+        throw Error('ユーザー番号は1〜999999の整数で入力してください。');
+      person.userNumber = number as number | null;
       break;
     }
     case 'aiFeeSetting': {
@@ -756,6 +778,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
       break;
     }
     case 'availability': {
+      if (actor.role === 'ADMIN') throw Error('ADMINのMID.予定は閲覧専用です。');
       const userId = String(p.userId ?? actor.id);
       if (userId !== actor.id) owner();
       if (!s.users.some((u) => u.id === userId && isParticipant(u)))
@@ -770,7 +793,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
           c.date > '2027-03-31' ||
           !Number.isInteger(c.hour) ||
           c.hour < 9 ||
-          c.hour > 22 ||
+          c.hour > 23 ||
           (c.status !== null && !['AVAILABLE', 'MAYBE', 'UNAVAILABLE'].includes(c.status))
         )
           throw Error('予定の対象期間・時間を確認してください。');
@@ -805,6 +828,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
       paid: '支払済みを記録',
       payment: '支払明細を保存',
       aiFeeSetting: '月額AI利用料を設定',
+      userNumber: 'ユーザー番号を設定',
       travelClaim: '交通費申請を保存',
       travelDeclaration: '交通費なしの申告を更新',
       travelTemplate: '交通費の経路を保存',

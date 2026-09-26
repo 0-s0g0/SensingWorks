@@ -33,7 +33,8 @@ export function AvailabilityPage() {
   const [editing, setEditing] = useState(false);
   const members = state.users.filter((u) => u.active && isParticipant(u));
   const admin = target === 'team';
-  const editable = editing && !admin && (target === user.id || canManage(user));
+  const readOnly = user.role === 'ADMIN';
+  const editable = !readOnly && editing && !admin && (target === user.id || canManage(user));
   const initial = weekOf(
     new Date() < new Date('2026-09-01')
       ? new Date('2026-09-01')
@@ -52,7 +53,7 @@ export function AvailabilityPage() {
   const dates = Array.from({ length: 7 }, (_, i) =>
       format(addDays(jstDate(week), i), 'yyyy-MM-dd'),
     ),
-    hours = Array.from({ length: 14 }, (_, i) => 9 + i),
+    hours = Array.from({ length: 15 }, (_, i) => 9 + i),
     key = (d: string, h: number) => `${d}/${h}`;
   const valid = (d: string) => d >= '2026-09-01' && d <= '2027-03-31';
   function status(d: string, h: number) {
@@ -157,7 +158,7 @@ export function AvailabilityPage() {
               </>
             ) : (
               <>
-                {canManage(user) && !admin && target !== user.id && (
+                {!readOnly && canManage(user) && !admin && target !== user.id && (
                   <Button variant="outline" onClick={() => setEditing(true)}>
                     表示中の予定を編集
                   </Button>
@@ -278,7 +279,9 @@ export function AvailabilityPage() {
               <span style={{ background: '#168f83' }} />多
             </div>
           ) : (
-            <span>閲覧のみ（本人とOwnerが編集できます）</span>
+            <span>
+              {readOnly ? 'ADMINは閲覧専用です' : '閲覧のみ（本人とOwnerが編集できます）'}
+            </span>
           )}
           <span className="calendar-help">
             <MousePointer2 size={14} />
@@ -425,12 +428,12 @@ export function AvailabilityPage() {
             <span className="live-dot" />
             入力対象：2026年9月1日〜2027年3月31日
           </span>
-          <span>9:00〜23:00 · 1時間単位</span>
+          <span>9:00〜翌0:00 · 1時間単位</span>
         </div>
       </div>
       {selected && (
         <Modal
-          title={`${format(new Date(selected.date), 'M月d日（E）', { locale: ja })} ${selected.hour}:00–${selected.hour + 1}:00`}
+          title={`${format(new Date(selected.date), 'M月d日（E）', { locale: ja })} ${selected.hour}:00–${selected.hour === 23 ? '翌0' : selected.hour + 1}:00`}
           close={() => setSelected(null)}
         >
           {members.map((p) => {

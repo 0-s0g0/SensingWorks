@@ -1,5 +1,5 @@
 import { endOfMonth } from 'date-fns';
-import { isParticipant, type State } from './domain';
+import { compareUsers, isParticipant, type State } from './domain';
 import { savedPaymentResult, validPaymentDate } from './payment';
 import { format, jstDate } from './time';
 import { submittedTravelTotal } from './travel';
@@ -63,12 +63,7 @@ export function monthlySettlement(state: State, month: string) {
       };
     })
     .filter((r) => r.included)
-    .sort(
-      (a, b) =>
-        Number(b.issues.length > 0) - Number(a.issues.length > 0) ||
-        b.issues.length - a.issues.length ||
-        a.person.name.localeCompare(b.person.name, 'ja'),
-    );
+    .sort((a, b) => compareUsers(a.person, b.person));
 }
 
 export function teamPointProgress(state: State, month: string) {

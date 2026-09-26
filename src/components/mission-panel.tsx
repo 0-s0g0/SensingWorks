@@ -30,9 +30,9 @@ export const reportFields = [
 ] as const;
 export function People({ item, shares }: { item: WbsItem; shares?: Record<string, number> }) {
   const { state } = useStore();
-  const ids = item.assigneeIds.filter(
-    (id) => state.users.find((u) => u.id === id)?.role !== 'ADMIN',
-  );
+  const ids = state.users
+    .filter((u) => isParticipant(u) && item.assigneeIds.includes(u.id))
+    .map((u) => u.id);
   return (
     <div className="people-list">
       {ids.length ? (
@@ -786,11 +786,13 @@ function MissionEditor({ item, done }: { item?: WbsItem; done: () => void }) {
           defaultValue={item?.primaryId ?? selected[0]}
           key={selected.join(',')}
         >
-          {selected.map((id) => (
-            <option key={id} value={id}>
-              {state.users.find((u) => u.id === id)?.name}
-            </option>
-          ))}
+          {state.users
+            .filter((u) => selected.includes(u.id))
+            .map(({ id }) => (
+              <option key={id} value={id}>
+                {state.users.find((u) => u.id === id)?.name}
+              </option>
+            ))}
         </select>
       </Field>
       <fieldset>

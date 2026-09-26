@@ -39,6 +39,7 @@ import {
   weekOf,
   inWeek,
   yen,
+  type Profile,
   type WeeklyReport,
   type WbsItem,
 } from '@/lib/domain';
@@ -80,7 +81,12 @@ function Shell() {
     [mobile, setMobile] = useState(false);
   useEffect(() => setMobile(false), [path]);
   useEffect(() => {
-    if (ready && authenticated && user.role === 'ADMIN' && path !== '/admin')
+    if (
+      ready &&
+      authenticated &&
+      user.role === 'ADMIN' &&
+      !['/admin', '/availability'].includes(path)
+    )
       router.replace('/admin');
   }, [ready, authenticated, user.role, path, router]);
   if (!ready)
@@ -94,7 +100,7 @@ function Shell() {
   const managementNav = { href: '/admin', name: '管理', icon: Settings2 };
   const navigation =
     user.role === 'ADMIN'
-      ? [managementNav]
+      ? [managementNav, { href: '/availability', name: 'MID.予定', icon: CalendarDays }]
       : canManage(user)
         ? [...nav, { href: '/admin', name: '管理', icon: Settings2 }]
         : nav;
@@ -104,7 +110,8 @@ function Shell() {
         100,
     );
   let content: ReactNode;
-  if (user.role === 'ADMIN') content = <AdminPage />;
+  if (user.role === 'ADMIN')
+    content = path === '/availability' ? <AvailabilityPage /> : <AdminPage />;
   else if (path === '/') content = <Home />;
   else if (path === '/wbs') content = <WbsPage />;
   else if (path === '/reports') content = <ReportsPage />;
@@ -968,12 +975,14 @@ function AdminPage() {
           />
           <p className="help-text">
             許可リストは新規参加を制御します。既存ユーザーを停止する場合は、下の利用状態を無効にしてください。
+            ユーザー番号の小さい順に表や選択欄を表示します。未設定は最後、同じ番号は名前順です。空欄で保存すると番号を解除できます。
           </p>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>メンバー</th>
+                  <th>ユーザー番号</th>
                   <th>ロール</th>
                   <th>利用状態</th>
                 </tr>
@@ -983,20 +992,27 @@ function AdminPage() {
                   <tr key={u.id}>
                     <td>{u.name}</td>
                     <td>
+                      <UserNumberEditor key={`${u.id}_${u.userNumber}`} person={u} />
+                    </td>
+                    <td>
                       <select
                         aria-label={`${u.name} ロール`}
                         disabled={demo || u.id === user.id}
                         value={u.role}
                         onChange={(e) =>
                           updateUser(u.id, {
-                            role: e.target.value as 'TEAM' | 'LEADER' | 'OWNER' | 'ADMIN',
+                            role: e.target.value as 'TEAM' | 'LEADER' | 'ADMIN',
                             active: u.active,
                           }).catch((e) => setMessage(e.message))
                         }
                       >
                         <option>TEAM</option>
                         <option value="LEADER">LEADER（定額支払い）</option>
-                        <option>OWNER</option>
+                        {u.role === 'OWNER' && (
+                          <option value="OWNER" disabled>
+                            OWNER（旧ロール・移行待ち）
+                          </option>
+                        )}
                         <option value="ADMIN">ADMIN（管理専用・参加しない）</option>
                       </select>
                     </td>
@@ -1024,5 +1040,48 @@ function AdminPage() {
         </AccordionCard>
       </div>
     </>
+  );
+}
+
+function UserNumberEditor({ person }: { person: Profile }) {
+  const { act, busy } = useStore();
+  const [value, setValue] = useState(String(person.userNumber ?? ''));
+  const [error, setError] = useState('');
+  return (
+    <form
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setError('');
+        try {
+          await act({
+            type: 'userNumber',
+            payload: { userId: person.id, userNumber: value === '' ? null : Number(value) },
+          });
+        } catch (e) {
+          setError((e as Error).message);
+        }
+      }}
+    >
+      <input
+        aria-label={`${person.name} ユーザー番号`}
+        type="number"
+        min={1}
+        max={999999}
+        step={1}
+        value={value}
+        placeholder="未設定"
+        onChange={(e) => setValue(e.target.value)}
+      />
+      <Button
+        type="submit"
+        size="sm"
+        variant="outline"
+        aria-label={`${person.name}の番号を保存`}
+        disabled={busy || value === String(person.userNumber ?? '')}
+      >
+        保存
+      </Button>
+      <Notice text={error} />
+    </form>
   );
 }

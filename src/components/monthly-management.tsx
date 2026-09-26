@@ -111,7 +111,7 @@ export function MonthlyManagement() {
             />
             確認が必要な人だけ
           </label>
-          <span className="muted">要確認の多い順</span>
+          <span className="muted">ユーザー番号順</span>
         </div>
         <div className="table-wrap settlement-table">
           <table aria-label="月末精算一覧">

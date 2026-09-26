@@ -831,3 +831,77 @@ it('lets managers assign LEADER while preserving TEAM access and enforcing fixed
     ),
   );
 });
+
+it('retires new OWNER assignments while preserving existing accounts until migration', async () => {
+  const db = as('demo-owner');
+  await assertFails(updateDoc(doc(db, 'users', 'demo-aoki'), { role: 'OWNER' }));
+  await assertSucceeds(updateDoc(doc(db, 'users', 'demo-owner'), { role: 'OWNER', active: true }));
+  await assertSucceeds(updateDoc(doc(db, 'users', 'demo-owner'), { role: 'ADMIN' }));
+  await assertFails(updateDoc(doc(db, 'users', 'demo-owner'), { role: 'OWNER' }));
+  await assertSucceeds(updateDoc(doc(db, 'users', 'demo-aoki'), { role: 'LEADER' }));
+});
+
+it('allows the last MID hour before midnight but rejects out-of-range hours', async () => {
+  const db = as('demo-aoki');
+  for (const hour of [8, 9, 23, 24]) {
+    const operation = setDoc(doc(db, 'availability', `demo-aoki_2026-09-25_${hour}`), {
+      userId: 'demo-aoki',
+      date: '2026-09-25',
+      hour,
+      status: 'AVAILABLE',
+    });
+    if (hour === 9 || hour === 23) await assertSucceeds(operation);
+    else await assertFails(operation);
+  }
+});
+
+it('makes ADMIN availability read-only, including other participants and deletes', async () => {
+  await env.withSecurityRulesDisabled(async (c) => {
+    await setDoc(doc(c.firestore(), 'users', 'admin'), {
+      name: 'Admin',
+      role: 'ADMIN',
+      active: true,
+    });
+    await setDoc(doc(c.firestore(), 'availability', 'demo-aoki_2026-09-25_23'), {
+      userId: 'demo-aoki',
+      date: '2026-09-25',
+      hour: 23,
+      status: 'AVAILABLE',
+    });
+  });
+  const db = as('admin');
+  const cell = doc(db, 'availability', 'demo-aoki_2026-09-25_23');
+  await assertSucceeds(getDocs(collection(db, 'availability')));
+  await assertFails(updateDoc(cell, { status: 'UNAVAILABLE' }));
+  await assertFails(deleteDoc(cell));
+  await assertFails(
+    setDoc(doc(db, 'availability', 'demo-aoki_2026-09-25_22'), {
+      userId: 'demo-aoki',
+      date: '2026-09-25',
+      hour: 22,
+      status: 'AVAILABLE',
+    }),
+  );
+});
+
+it('restricts user numbers to management and preserves them on role updates', async () => {
+  const db = as('demo-owner');
+  const target = doc(db, 'users', 'demo-aoki');
+  const state = createSeed();
+  const actor = state.users.find((u) => u.role === 'OWNER')!;
+  await assertSucceeds(
+    saveAction(
+      state,
+      { type: 'userNumber', payload: { userId: 'demo-aoki', userNumber: 10 } },
+      actor,
+      db as unknown as Firestore,
+    ),
+  );
+  await assertFails(updateDoc(doc(as('demo-aoki'), 'users', 'demo-aoki'), { userNumber: 2 }));
+  for (const userNumber of [0, -1, 1.5, 1000000, '3'])
+    await assertFails(updateDoc(target, { userNumber }));
+  await assertSucceeds(updateDoc(target, { role: 'LEADER' }));
+  expect((await getDoc(target)).data()?.userNumber).toBe(10);
+  await assertSucceeds(updateDoc(target, { userNumber: null }));
+  await assertSucceeds(updateDoc(doc(db, 'users', 'demo-owner'), { userNumber: 1 }));
+});

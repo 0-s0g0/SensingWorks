@@ -6,11 +6,11 @@ it('uses calendar month boundaries including leap years', () => {
   expect(monthPeriod('2028-02').end).toBe('2028-02-29');
   expect(() => monthPeriod('2026-13')).toThrow();
 });
-it('prioritizes unresolved people and separates saved costs from live claims', () => {
+it('orders by user number and separates saved costs from live claims', () => {
   const state = createSeed();
   state.users = [
-    { id: 'ready', name: 'あ', role: 'TEAM', active: true },
-    { id: 'pending', name: 'ん', role: 'TEAM', active: true },
+    { id: 'ready', name: 'あ', role: 'TEAM', active: true, userNumber: 20 },
+    { id: 'pending', name: 'ん', role: 'TEAM', active: true, userNumber: 10 },
     { id: 'inactive', name: '旧メンバー', role: 'TEAM', active: false },
     { id: 'admin', name: '管理', role: 'ADMIN', active: true },
   ];

@@ -1,5 +1,5 @@
 'use client';
-import { canManage } from './domain';
+import { canManage, compareUsers } from './domain';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -165,6 +165,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Team sees only its own travel records and no management payment documents.
   const visible = {
     ...state,
+    users: [...state.users].sort(compareUsers),
     travelTemplates: state.travelTemplates.filter((t) => t.userId === user.id),
     ...(!canManage(user)
       ? {

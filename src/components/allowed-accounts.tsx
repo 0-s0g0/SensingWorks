@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { subscribeLoginSessions, type LoginSession } from '@/lib/firebase';
+import { compareUsers } from '@/lib/domain';
 import { useStore } from '@/lib/store';
 import { Button } from './ui/button';
 import { Notice } from './ui/primitives';
@@ -31,11 +32,21 @@ export function AllowedAccounts({
       true,
     );
   }, [demo]);
-  const rows = [...new Set(emails.map((email) => email.trim().toLowerCase()))].map((email) => {
-    const session = sessions?.find((s) => s.email.toLowerCase() === email);
-    const member = session && state.users.find((u) => u.id === session.userId);
-    return { email, member, session };
-  });
+  const rows = [...new Set(emails.map((email) => email.trim().toLowerCase()))]
+    .map((email) => {
+      const session = sessions?.find((s) => s.email.toLowerCase() === email);
+      const member = session && state.users.find((u) => u.id === session.userId);
+      return { email, member, session };
+    })
+    .sort((a, b) =>
+      a.member && b.member
+        ? compareUsers(a.member, b.member)
+        : a.member
+          ? -1
+          : b.member
+            ? 1
+            : a.email.localeCompare(b.email),
+    );
   return (
     <div>
       <h3>個別許可メール一覧</h3>

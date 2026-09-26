@@ -22,7 +22,7 @@ it('exports the selected MID week and members, including unanswered hours and Ma
     { id: 'x', userId: 'demo-aoki', date: '2027-03-29', hour: 10, status: 'AVAILABLE' },
   ];
   const csv = availabilityCsv(s, '2027-03-29', 'demo-aoki');
-  expect(csv.split('\r\n')).toHaveLength(3 * 14 + 2);
+  expect(csv.split('\r\n')).toHaveLength(3 * 15 + 2);
   expect(csv).toContain('"参加可能","AVAILABLE"');
   expect(csv).toContain('"未入力",""');
   expect(csv).not.toContain('2027-04-01');
