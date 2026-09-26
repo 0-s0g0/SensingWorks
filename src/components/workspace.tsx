@@ -1,4 +1,5 @@
 'use client';
+import { AccordionCard } from './ui/accordion-card';
 import { TravelPage } from './travel';
 import { MonthlyManagement } from './monthly-management';
 import { canManage } from '@/lib/domain';
@@ -757,13 +758,11 @@ function AdminPage() {
         aria-labelledby="admin-tab-reviews"
         hidden={tab !== 'reviews'}
       >
-        <section>
-          <h2>レビュー待ち {waiting.length}件</h2>
+        <AccordionCard title={`レビュー待ち ${waiting.length}件`}>
           <MissionTable items={waiting} />
-        </section>
-        <WeeklyMatrix />
-        <section className="panel detail-section">
-          <h2>Owner専用・内部報酬</h2>
+        </AccordionCard>
+        <WeeklyMatrix collapsible />
+        <AccordionCard title="Owner専用・内部報酬">
           <div className="table-wrap">
             <table>
               <thead>
@@ -820,7 +819,7 @@ function AdminPage() {
               </tbody>
             </table>
           </div>
-        </section>
+        </AccordionCard>
       </div>
       <div
         role="tabpanel"
@@ -830,8 +829,7 @@ function AdminPage() {
       >
         <LoginHistory />
         {missionsOf(state).length < 57 && (
-          <section className="panel detail-section">
-            <h2>プロジェクトの初期設定</h2>
+          <AccordionCard title="プロジェクトの初期設定">
             <p>
               9大工程・57中工程・211小工程の添付WBSを登録します。既存の工程は保持し、未登録分のみ追加します。開始日・期限・担当は未設定、内部報酬は未確定の0円で登録します。
             </p>
@@ -845,11 +843,10 @@ function AdminPage() {
             >
               初期WBSを登録
             </Button>
-          </section>
+          </AccordionCard>
         )}
 
-        <section className="panel detail-section">
-          <h2>Googleアカウントの利用許可</h2>
+        <AccordionCard title="Googleアカウントの利用許可">
           <p>許可ドメインに属するアカウント、または個別許可アカウントが参加できます。</p>
           <form
             onSubmit={async (e) => {
@@ -989,7 +986,7 @@ function AdminPage() {
               </tbody>
             </table>
           </div>
-        </section>
+        </AccordionCard>
       </div>
     </>
   );

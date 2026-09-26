@@ -3131,3 +3131,13 @@ td .member-line {
 .payment-history { margin-top:24px; }
 .payment-history details { padding:14px 0; border-bottom:1px solid #e3ebe7; }
 .payment-history summary { cursor:pointer; color:#17614e; font-weight:600; }
+
+.accordion-card > .accordion-heading { margin:0; }
+.accordion-heading > button { width:100%; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:4px 0; border:0; background:transparent; color:inherit; font:inherit; font-weight:inherit; text-align:left; cursor:pointer; }
+.accordion-heading > button:hover { color:#17614e; }
+.accordion-heading > button:focus-visible { outline:2px solid #218570; outline-offset:6px; border-radius:4px; }
+.accordion-heading svg { flex-shrink:0; transition:transform 160ms ease; }
+.accordion-heading [aria-expanded=false] svg { transform:rotate(-90deg); }
+.accordion-body { padding-top:20px; }
+.accordion-body[hidden] { display:none; }
+@media (prefers-reduced-motion:reduce) { .accordion-heading svg { transition:none; } }

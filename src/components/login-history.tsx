@@ -1,4 +1,5 @@
 'use client';
+import { AccordionCard } from './ui/accordion-card';
 import { useEffect, useState } from 'react';
 import { useStore } from '@/lib/store';
 import { subscribeLoginSessions, type LoginSession } from '@/lib/firebase';
@@ -10,8 +11,7 @@ export function LoginHistory() {
   const [error, setError] = useState('');
   useEffect(() => (demo ? undefined : subscribeLoginSessions(setRows, setError)), [demo]);
   return (
-    <section className="panel detail-section">
-      <h2>セッション管理・ログイン履歴</h2>
+    <AccordionCard title="セッション管理・ログイン履歴">
       <p>直近100件のGoogleログインを表示します。日時は日本時間です。</p>
       <p className="muted">ログイン履歴であり、現在オンラインかどうかを示すものではありません。</p>
       <Notice text={error} />
@@ -41,6 +41,6 @@ export function LoginHistory() {
           </table>
         </div>
       )}
-    </section>
+    </AccordionCard>
   );
 }

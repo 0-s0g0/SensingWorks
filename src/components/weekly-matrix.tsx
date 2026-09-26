@@ -1,4 +1,5 @@
 'use client';
+import { AccordionCard } from './ui/accordion-card';
 import { isParticipant } from '@/lib/domain';
 import { Download } from 'lucide-react';
 import { downloadCsv, weeklyCsv } from '@/lib/csv';
@@ -9,7 +10,7 @@ import { format } from '@/lib/time';
 import { Modal } from './ui/primitives';
 import { Button } from './ui/button';
 
-export function WeeklyMatrix() {
+export function WeeklyMatrix({ collapsible = false }: { collapsible?: boolean }) {
   const { state } = useStore();
   const [selected, setSelected] = useState<{ userId: string; week: string } | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -23,9 +24,8 @@ export function WeeklyMatrix() {
   );
   const report = selected ? reports.get(`${selected.userId}_${selected.week}`) : undefined;
   return (
-    <section className="panel detail-section weekly-matrix">
+    <AccordionCard title="週報の提出一覧" className="weekly-matrix" collapsible={collapsible}>
       <div className="section-title">
-        <h2>週報の提出一覧</h2>
         <Button
           variant="outline"
           size="sm"
@@ -149,6 +149,6 @@ export function WeeklyMatrix() {
           )}
         </Modal>
       )}
-    </section>
+    </AccordionCard>
   );
 }

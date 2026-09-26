@@ -1,4 +1,5 @@
 'use client';
+import { AccordionCard } from './ui/accordion-card';
 import { submittedTravelTotal } from '@/lib/travel';
 import { useState } from 'react';
 import { endOfMonth, startOfMonth } from 'date-fns';
@@ -19,8 +20,7 @@ export function PaymentStatements({ month, personId }: { month?: string; personI
   const [selected, setSelected] = useState('');
   const userId = personId || selected || people[0]?.id || '';
   return (
-    <section className="panel detail-section">
-      <h2>AI電磁波・個人別支払明細</h2>
+    <AccordionCard title="AI電磁波・個人別支払明細">
       <p>個人・期間ごとに費用を保存し、Word形式で出力できます。</p>
       {!personId && (
         <Field label="明細の対象者">
@@ -39,7 +39,7 @@ export function PaymentStatements({ month, personId }: { month?: string; personI
       ) : (
         <p>対象者がいません。</p>
       )}
-    </section>
+    </AccordionCard>
   );
 }
 function PaymentEditor({ userId, month }: { userId: string; month?: string }) {

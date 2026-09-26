@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { AccordionCard } from './ui/accordion-card';
 import { eachDayOfInterval } from 'date-fns';
 import { useStore } from '@/lib/store';
 import { yen } from '@/lib/domain';
@@ -31,10 +32,9 @@ export function MonthlyManagement() {
 
   return (
     <>
-      <section className="panel detail-section settlement-panel">
+      <AccordionCard title="今月の精算" className="settlement-panel">
         <div className="section-title">
           <div>
-            <h2>今月の精算</h2>
             <p>メンバー名を押すと、内訳の確認と明細の編集ができます。</p>
           </div>
           <Field label="管理の対象月">
@@ -164,9 +164,8 @@ export function MonthlyManagement() {
           {start} 〜 {end}
           （日本時間・月末締め）。確定ポイントは承認日で集計します。支払合計は保存時点の金額で表示し（旧形式の明細は現在のポイントで計算）、明細未作成の人は含みません。
         </p>
-      </section>
-      <section className="panel detail-section weekly-matrix">
-        <h2>交通費の月別申請状況</h2>
+      </AccordionCard>
+      <AccordionCard title="交通費の月別申請状況" className="weekly-matrix">
         <p>
           名前と月合計は横スクロールしても表示されます。セルを押すと本人の交通費一覧が開きます。
         </p>
@@ -254,7 +253,7 @@ export function MonthlyManagement() {
             </tbody>
           </table>
         </div>
-      </section>
+      </AccordionCard>
       {detail && (
         <Modal
           drawer
