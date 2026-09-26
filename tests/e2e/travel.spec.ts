@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { createSeed } from '../../src/lib/seed';
-test('Team saves a route, reuses it across days, and management applies submitted costs', async ({
+test('Team saves a route, reuses it across days, and ADMIN approves before management applies costs', async ({
   page,
 }) => {
   const state = createSeed();
+  state.users.push({ id: 'admin', name: '管理者', role: 'ADMIN', active: true });
   await page.addInitScript((state) => {
     if (!localStorage.getItem('sensingworks-firebase-demo-v2'))
       localStorage.setItem(
@@ -22,7 +23,7 @@ test('Team saves a route, reuses it across days, and management applies submitte
   await page.getByLabel('よく使う経路の名前').fill('いつもの経路');
   await page.getByRole('button', { name: 'この経路を保存' }).click();
   await page.getByRole('button', { name: '交通費を申請', exact: true }).click();
-  await expect(page.getByText('保存状態：申請済み')).toBeVisible();
+  await expect(page.getByText('保存状態：承認待ち')).toBeVisible();
   await page.getByLabel('利用日', { exact: true }).fill('2026-09-25');
   await page.getByLabel('保存した経路を呼び出す').selectOption({ label: 'いつもの経路' });
   await expect(page.getByLabel('出発地', { exact: true })).toHaveValue('自宅');
@@ -33,21 +34,27 @@ test('Team saves a route, reuses it across days, and management applies submitte
   await page.reload();
   await page.getByLabel('利用日', { exact: true }).fill('2026-09-25');
   await expect(page.getByLabel('出発地', { exact: true })).toHaveValue('自宅');
-  await page.evaluate(
-    (ownerId) => {
-      const v = JSON.parse(localStorage.getItem('sensingworks-firebase-demo-v2')!);
-      v.userId = ownerId;
-      localStorage.setItem('sensingworks-firebase-demo-v2', JSON.stringify(v));
-    },
-    state.users.find((u) => u.role === 'OWNER')!.id,
-  );
+  await page.evaluate((ownerId) => {
+    const v = JSON.parse(localStorage.getItem('sensingworks-firebase-demo-v2')!);
+    v.userId = ownerId;
+    localStorage.setItem('sensingworks-firebase-demo-v2', JSON.stringify(v));
+  }, 'admin');
   await page.goto('/admin');
+  await page.getByLabel('管理の対象月').fill('2026-09');
+  const pending = page.getByRole('button', { name: '青木 海斗 2026-09-24 承認待ち', exact: true });
+  await pending.click();
+  await expect(page.getByRole('dialog')).toContainText('¥1,640');
+  await page.getByRole('button', { name: '承認', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: '青木 海斗 2026-09-24 承認済', exact: true }),
+  ).toBeVisible();
+
   await page
     .getByRole('table', { name: '月末精算一覧' })
     .getByRole('button', { name: new RegExp(state.users.find((u) => u.id === 'demo-aoki')!.name) })
     .click();
   await page.getByLabel('対象期間の開始日').fill('2026-09-01');
   await page.getByLabel('対象期間の終了日').fill('2026-09-30');
-  await page.getByRole('button', { name: '申請済み交通費を明細に反映' }).click();
+  await page.getByRole('button', { name: '承認済み交通費を明細に反映' }).click();
   await expect(page.getByLabel('交通費（円）', { exact: true })).toHaveValue('1640');
 });

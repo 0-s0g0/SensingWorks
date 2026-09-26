@@ -1,6 +1,6 @@
 'use client';
 import { AccordionCard } from './ui/accordion-card';
-import { submittedTravelTotal } from '@/lib/travel';
+import { approvedTravelTotal } from '@/lib/travel';
 import { useState } from 'react';
 import { endOfMonth, startOfMonth } from 'date-fns';
 import { useStore } from '@/lib/store';
@@ -71,7 +71,7 @@ function PaymentEditor({ userId, month }: { userId: string; month?: string }) {
             periodStart: start,
             periodEnd: end,
             aiFee: state.aiFeeSettings.find((s) => s.id === userId)?.monthlyFee ?? 0,
-            travelCost: submittedTravelTotal(state.travelClaims, userId, start, end),
+            travelCost: approvedTravelTotal(state.travelClaims, userId, start, end),
             pointRate: 0,
             variableCap: 0,
             amountMode: defaultAmountMode(state.users.find((u) => u.id === userId)!.role),
@@ -288,11 +288,11 @@ function PaymentForm({
         月額AI利用料を明細に反映
       </Button>
       <p>
-        対象期間の申請済み交通費：
+        対象期間の承認済み交通費：
         {yen(
-          submittedTravelTotal(state.travelClaims, item.userId, item.periodStart, item.periodEnd),
+          approvedTravelTotal(state.travelClaims, item.userId, item.periodStart, item.periodEnd),
         )}
-        （下書きを除く）
+        （承認済みのみ）
       </p>
       <Button
         type="button"
@@ -301,7 +301,7 @@ function PaymentForm({
         onClick={() =>
           setItem({
             ...item,
-            travelCost: submittedTravelTotal(
+            travelCost: approvedTravelTotal(
               state.travelClaims,
               item.userId,
               item.periodStart,
@@ -310,9 +310,9 @@ function PaymentForm({
           })
         }
       >
-        申請済み交通費を明細に反映
+        承認済み交通費を明細に反映
       </Button>
-      <p>反映ボタンで交通費欄を置き換えます。申請の修正後は再度反映し、明細を保存してください。</p>
+      <p>反映ボタンで交通費欄を置き換えます。交通費の承認後は再度反映し、明細を保存してください。</p>
       <p>
         変動費 ＝ 対象期間の承認済みポイント × 単価（上限まで）。上限0円の場合、変動費は0円です。
       </p>

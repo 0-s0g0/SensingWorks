@@ -3,7 +3,7 @@ import { createSeed } from '../src/lib/seed';
 import { transition } from '../src/lib/domain';
 import {
   travelTotal,
-  submittedTravelTotal,
+  approvedTravelTotal,
   validateClaim,
   type TravelClaim,
 } from '../src/lib/travel';
@@ -23,11 +23,13 @@ it('doubles fares for round trips but parking only once', () => {
   expect(travelTotal(claim)).toBe(1640);
   expect(travelTotal({ ...claim, trip: 'ONE_WAY' })).toBe(1070);
 });
-it('aggregates only submitted claims for the selected person and inclusive period', () => {
+it('aggregates only approved claims for the selected person and inclusive period', () => {
   expect(
-    submittedTravelTotal(
+    approvedTravelTotal(
       [
+        { ...claim, status: 'APPROVED' },
         claim,
+        { ...claim, status: 'REJECTED' },
         { ...claim, status: 'DRAFT' },
         { ...claim, userId: 'other' },
         { ...claim, date: '2026-09-25' },
@@ -117,4 +119,50 @@ it('records no-travel months, rejects contradictory declarations and cancels on 
     transition(declared, { ...action, payload: { month: '2026-09', status: 'CANCELLED' } }, actor)
       .travelDeclarations[0].status,
   ).toBe('CANCELLED');
+});
+
+it('requires ADMIN review, excludes pending/rejected costs, and allows rejected resubmission', () => {
+  const state = createSeed();
+  const team = state.users.find((u) => u.id === claim.userId)!;
+  const admin = { id: 'admin', name: 'Admin', role: 'ADMIN' as const, active: true };
+  state.users.push(admin);
+  const pending = transition(state, { type: 'travelClaim', payload: { item: claim } }, team);
+  const review = (status: string) => ({
+    type: 'travelReview' as const,
+    payload: { id: claim.id, status },
+  });
+  expect(approvedTravelTotal(pending.travelClaims, team.id, claim.date, claim.date)).toBe(0);
+  for (const role of ['TEAM', 'LEADER', 'OWNER'] as const)
+    expect(() => transition(pending, review('APPROVED'), { ...team, role })).toThrow(/ADMIN/);
+  expect(() =>
+    transition(
+      state,
+      { type: 'travelClaim', payload: { item: { ...claim, status: 'APPROVED' } } },
+      team,
+    ),
+  ).toThrow();
+  expect(() =>
+    transition(
+      state,
+      { type: 'travelClaim', payload: { item: { ...claim, reviewedBy: admin.id } } },
+      team,
+    ),
+  ).toThrow();
+  const rejected = transition(pending, review('REJECTED'), admin);
+  expect(rejected.travelClaims[0]).toMatchObject({ status: 'REJECTED', reviewedBy: admin.id });
+  expect(approvedTravelTotal(rejected.travelClaims, team.id, claim.date, claim.date)).toBe(0);
+  const resubmitted = transition(rejected, { type: 'travelClaim', payload: { item: claim } }, team);
+  expect(resubmitted.travelClaims[0].reviewedBy).toBeUndefined();
+  const approved = transition(resubmitted, review('APPROVED'), admin);
+  expect(approvedTravelTotal(approved.travelClaims, team.id, claim.date, claim.date)).toBe(1640);
+  expect(() =>
+    transition(approved, { type: 'travelClaim', payload: { item: claim } }, team),
+  ).toThrow(/承認済み/);
+  expect(() => transition(approved, review('REJECTED'), admin)).toThrow(/承認待ち/);
+  const draft = transition(
+    state,
+    { type: 'travelClaim', payload: { item: { ...claim, status: 'DRAFT' } } },
+    team,
+  );
+  expect(() => transition(draft, review('APPROVED'), admin)).toThrow(/承認待ち/);
 });

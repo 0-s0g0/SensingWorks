@@ -2,7 +2,13 @@
 import { useState } from 'react';
 import { useStore } from '@/lib/store';
 import { canManage, isParticipant, yen } from '@/lib/domain';
-import { emptyRoute, travelTotal, type TravelRoute, type TravelClaim } from '@/lib/travel';
+import {
+  emptyRoute,
+  travelStatusLabels,
+  travelTotal,
+  type TravelRoute,
+  type TravelClaim,
+} from '@/lib/travel';
 import { format } from '@/lib/time';
 import { validPaymentDate } from '@/lib/payment';
 import { Button } from './ui/button';
@@ -63,13 +69,13 @@ export function TravelPage() {
           <NoTravelDeclaration key={user.id + month} month={month} />
         )}
         <p>
-          申請済み合計：
+          承認済み合計：
           {yen(
             claims
-              .filter((c) => c.status === 'SUBMITTED')
+              .filter((c) => c.status === 'APPROVED')
               .reduce((sum, c) => sum + travelTotal(c), 0),
           )}
-          （下書きを除く）
+          （承認済みのみ）
         </p>
         <div className="table-wrap">
           <table>
@@ -98,9 +104,9 @@ export function TravelPage() {
                   <td>{yen(c.trainFare)}</td>
                   <td>{yen(c.parkingFee)}</td>
                   <td>{yen(travelTotal(c))}</td>
-                  <td>{c.status === 'SUBMITTED' ? '申請済み' : '下書き'}</td>
+                  <td>{travelStatusLabels[c.status]}</td>
                   <td>
-                    {c.userId === user.id && (
+                    {c.userId === user.id && c.status !== 'APPROVED' && (
                       <Button variant="outline" onClick={() => setDate(c.date)}>
                         編集
                       </Button>
@@ -167,100 +173,105 @@ function TravelForm({ date, saved }: { date: string; saved?: TravelClaim }) {
       }}
     >
       <p>
-        1日1件で保存します。同じ日の保存は更新になります。申請済みの内容も修正でき、下書きに戻すと申請対象から外れます。
+        1日1件で保存します。同じ日の保存は更新になります。申請後はADMINが来訪を確認します。不承認の場合は修正して再申請できます。承認済みの申請は変更できません。
       </p>
-      {saved && (
-        <p role="status">保存状態：{saved.status === 'SUBMITTED' ? '申請済み' : '下書き'}</p>
-      )}
-      <Field label="保存した経路を呼び出す">
-        <select
-          value=""
-          onChange={(e) => {
-            const t = templates.find((t) => t.id === e.target.value);
-            if (t) {
-              setRoute(t);
-              setName(t.name);
-            }
-          }}
-        >
-          <option value="">経路を選択</option>
-          {templates.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <div className="form-grid">
-        <Field label="出発地">
-          <input
-            required
-            maxLength={200}
-            value={route.departure}
-            onChange={(e) => setRoute({ ...route, departure: e.target.value })}
-          />
-        </Field>
-        <Field label="到着地">
-          <input
-            required
-            maxLength={200}
-            value={route.arrival}
-            onChange={(e) => setRoute({ ...route, arrival: e.target.value })}
-          />
-        </Field>
-        <Field label="片道・往復">
+      {saved && <p role="status">保存状態：{travelStatusLabels[saved.status]}</p>}
+      <fieldset
+        disabled={saved?.status === 'APPROVED'}
+        style={{ border: 0, padding: 0, margin: 0 }}
+      >
+        <Field label="保存した経路を呼び出す">
           <select
-            value={route.trip}
-            onChange={(e) => setRoute({ ...route, trip: e.target.value as TravelRoute['trip'] })}
+            value=""
+            onChange={(e) => {
+              const t = templates.find((t) => t.id === e.target.value);
+              if (t) {
+                setRoute(t);
+                setName(t.name);
+              }
+            }}
           >
-            <option value="ONE_WAY">片道</option>
-            <option value="ROUND_TRIP">往復</option>
+            <option value="">経路を選択</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
           </select>
         </Field>
-        {(
-          [
-            ['busFare', 'バス代（片道・円）'],
-            ['trainFare', '電車代（片道・円）'],
-            ['parkingFee', '駐車場代（1日分・円）'],
-          ] as const
-        ).map(([key, label]) => (
-          <Field key={key} label={label}>
+        <div className="form-grid">
+          <Field label="出発地">
             <input
-              type="number"
               required
-              min={0}
-              max={1000000}
-              step={1}
-              value={Number.isNaN(route[key]) ? '' : route[key]}
-              onChange={(e) => setRoute({ ...route, [key]: e.target.valueAsNumber })}
+              maxLength={200}
+              value={route.departure}
+              onChange={(e) => setRoute({ ...route, departure: e.target.value })}
             />
           </Field>
-        ))}
-      </div>
-      <p>往復は（バス代＋電車代）× 2 ＋ 駐車場代。利用しない項目は0円にしてください。</p>
-      <p aria-label="交通費合計">
-        <strong>合計：{Number.isFinite(travelTotal(route)) ? yen(travelTotal(route)) : '—'}</strong>
-      </p>
-      <Field label="よく使う経路の名前">
-        <input
-          maxLength={100}
-          placeholder="例：九工大からMID."
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-      </Field>
-      <Button type="submit" value="template" variant="outline" disabled={busy || !name.trim()}>
-        この経路を保存
-      </Button>
-      <Notice text={message} />
-      <div className="form-actions">
-        <Button type="submit" value="draft" variant="outline" disabled={busy}>
-          {saved?.status === 'SUBMITTED' ? '下書きに戻す' : '下書き保存'}
+          <Field label="到着地">
+            <input
+              required
+              maxLength={200}
+              value={route.arrival}
+              onChange={(e) => setRoute({ ...route, arrival: e.target.value })}
+            />
+          </Field>
+          <Field label="片道・往復">
+            <select
+              value={route.trip}
+              onChange={(e) => setRoute({ ...route, trip: e.target.value as TravelRoute['trip'] })}
+            >
+              <option value="ONE_WAY">片道</option>
+              <option value="ROUND_TRIP">往復</option>
+            </select>
+          </Field>
+          {(
+            [
+              ['busFare', 'バス代（片道・円）'],
+              ['trainFare', '電車代（片道・円）'],
+              ['parkingFee', '駐車場代（1日分・円）'],
+            ] as const
+          ).map(([key, label]) => (
+            <Field key={key} label={label}>
+              <input
+                type="number"
+                required
+                min={0}
+                max={1000000}
+                step={1}
+                value={Number.isNaN(route[key]) ? '' : route[key]}
+                onChange={(e) => setRoute({ ...route, [key]: e.target.valueAsNumber })}
+              />
+            </Field>
+          ))}
+        </div>
+        <p>往復は（バス代＋電車代）× 2 ＋ 駐車場代。利用しない項目は0円にしてください。</p>
+        <p aria-label="交通費合計">
+          <strong>
+            合計：{Number.isFinite(travelTotal(route)) ? yen(travelTotal(route)) : '—'}
+          </strong>
+        </p>
+        <Field label="よく使う経路の名前">
+          <input
+            maxLength={100}
+            placeholder="例：九工大からMID."
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </Field>
+        <Button type="submit" value="template" variant="outline" disabled={busy || !name.trim()}>
+          この経路を保存
         </Button>
-        <Button type="submit" value="submit" disabled={busy}>
-          交通費を申請
-        </Button>
-      </div>
+        <Notice text={message} />
+        <div className="form-actions">
+          <Button type="submit" value="draft" variant="outline" disabled={busy}>
+            {saved?.status === 'SUBMITTED' ? '下書きに戻す' : '下書き保存'}
+          </Button>
+          <Button type="submit" value="submit" disabled={busy}>
+            交通費を申請
+          </Button>
+        </div>
+      </fieldset>
     </form>
   );
 }

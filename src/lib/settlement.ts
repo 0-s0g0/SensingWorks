@@ -2,7 +2,7 @@ import { endOfMonth } from 'date-fns';
 import { compareUsers, isParticipant, type State } from './domain';
 import { savedPaymentResult, validPaymentDate } from './payment';
 import { format, jstDate } from './time';
-import { submittedTravelTotal } from './travel';
+import { approvedTravelTotal } from './travel';
 
 export function monthPeriod(month: string) {
   const start = `${month}-01`;
@@ -31,7 +31,7 @@ export function monthlySettlement(state: State, month: string) {
         (d) => d.userId === person.id && d.month === month,
       );
       const noTravel = declaration?.status === 'NONE' && claims.length === 0;
-      const travel = submittedTravelTotal(claims, person.id, start, end);
+      const travel = approvedTravelTotal(claims, person.id, start, end);
       const draftCount = claims.filter((c) => c.status === 'DRAFT').length;
       const result = statement ? savedPaymentResult(statement, awards) : undefined;
       const livePoints = awards.reduce((sum, a) => sum + a.points, 0);
@@ -41,8 +41,11 @@ export function monthlySettlement(state: State, month: string) {
       if (statement && statement.travelCost !== travel) issues.push('交通費に差額あり');
       if (!statement) issues.push('明細未作成');
       if (draftCount) issues.push(`交通費の下書き ${draftCount}件`);
-      if (!noTravel && !claims.some((c) => c.status === 'SUBMITTED'))
-        issues.push('交通費の申告待ち');
+      const awaiting = claims.filter((c) => c.status === 'SUBMITTED').length;
+      const rejected = claims.filter((c) => c.status === 'REJECTED').length;
+      if (awaiting) issues.push(`交通費の承認待ち ${awaiting}件`);
+      if (rejected) issues.push(`交通費の不承認 ${rejected}件`);
+      if (!noTravel && !claims.some((c) => c.status !== 'DRAFT')) issues.push('交通費の申告待ち');
       if (declaration?.status === 'NONE' && claims.length > 0)
         issues.push('交通費なしの申告と記録が不一致');
       return {

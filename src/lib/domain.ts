@@ -163,6 +163,7 @@ export type Action = {
     | 'payment'
     | 'travelDeclaration'
     | 'travelClaim'
+    | 'travelReview'
     | 'travelTemplate';
   payload: Record<string, unknown>;
 };
@@ -326,11 +327,30 @@ export function transition(state: State, action: Action, actor: Profile): State 
       if (!isParticipant(actor) || item.userId !== actor.id)
         throw Error('自分の交通費のみ保存できます。');
       validateClaim(item);
+      if (
+        !['DRAFT', 'SUBMITTED'].includes(item.status) ||
+        item.reviewedAt !== undefined ||
+        item.reviewedBy !== undefined
+      )
+        throw Error('申請者は承認状態を設定できません。');
+      if (s.travelClaims.find((c) => c.id === item.id)?.status === 'APPROVED')
+        throw Error('承認済みの交通費は変更できません。');
       const declaration = s.travelDeclarations.find(
         (d) => d.userId === actor.id && d.month === item.date.slice(0, 7),
       );
       if (declaration) declaration.status = 'CANCELLED';
       s.travelClaims = [...s.travelClaims.filter((c) => c.id !== item.id), item];
+      break;
+    }
+    case 'travelReview': {
+      if (actor.role !== 'ADMIN') throw Error('交通費の承認にはADMIN権限が必要です。');
+      const claim = s.travelClaims.find((c) => c.id === p.id);
+      if (!claim || claim.status !== 'SUBMITTED') throw Error('承認待ちの交通費のみ審査できます。');
+      if (!['APPROVED', 'REJECTED'].includes(String(p.status)))
+        throw Error('承認か不承認を選択してください。');
+      claim.status = p.status as 'APPROVED' | 'REJECTED';
+      claim.reviewedBy = actor.id;
+      claim.reviewedAt = now;
       break;
     }
     case 'travelTemplate': {
@@ -830,6 +850,7 @@ export function transition(state: State, action: Action, actor: Profile): State 
       aiFeeSetting: '月額AI利用料を設定',
       userNumber: 'ユーザー番号を設定',
       travelClaim: '交通費申請を保存',
+      travelReview: '交通費申請を審査',
       travelDeclaration: '交通費なしの申告を更新',
       travelTemplate: '交通費の経路を保存',
     }[action.type],

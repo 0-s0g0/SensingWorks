@@ -905,3 +905,62 @@ it('restricts user numbers to management and preserves them on role updates', as
   await assertSucceeds(updateDoc(target, { userNumber: null }));
   await assertSucceeds(updateDoc(doc(db, 'users', 'demo-owner'), { userNumber: 1 }));
 });
+
+it('only ADMIN can review pending travel; approval locks costs and rejection allows resubmission', async () => {
+  const state = createSeed();
+  const team = state.users.find((u) => u.id === 'demo-aoki')!;
+  const admin = { id: 'admin', name: 'Admin', role: 'ADMIN' as const, active: true };
+  state.users.push(admin);
+  await env.withSecurityRulesDisabled(async (c) =>
+    setDoc(doc(c.firestore(), 'users', admin.id), body(admin)),
+  );
+  const item = {
+    id: `${team.id}_2026-09-24`,
+    userId: team.id,
+    date: '2026-09-24',
+    status: 'SUBMITTED' as const,
+    departure: '自宅',
+    arrival: 'MID.',
+    trip: 'ONE_WAY' as const,
+    busFare: 200,
+    trainFare: 0,
+    parkingFee: 0,
+  };
+  const submit = { type: 'travelClaim' as const, payload: { item } };
+  await assertSucceeds(saveAction(state, submit, team, as(team.id) as unknown as Firestore));
+  const pending = transition(state, submit, team);
+  const fields = { status: 'APPROVED', reviewedBy: admin.id, reviewedAt: new Date().toISOString() };
+  await assertFails(updateDoc(doc(as(team.id), 'travelClaims', item.id), fields));
+  await assertFails(updateDoc(doc(as('demo-owner'), 'travelClaims', item.id), fields));
+  await assertFails(
+    updateDoc(doc(as(admin.id), 'travelClaims', item.id), { ...fields, busFare: 999 }),
+  );
+  await assertFails(
+    updateDoc(doc(as(admin.id), 'travelClaims', item.id), { ...fields, reviewedBy: team.id }),
+  );
+  const reject = { type: 'travelReview' as const, payload: { id: item.id, status: 'REJECTED' } };
+  await assertSucceeds(saveAction(pending, reject, admin, as(admin.id) as unknown as Firestore));
+  const rejected = transition(pending, reject, admin);
+  // Reload the saved review timestamp, just as the client subscription does.
+  rejected.travelClaims = [
+    {
+      id: item.id,
+      ...(await getDoc(doc(as(team.id), 'travelClaims', item.id))).data(),
+    } as typeof item,
+  ];
+  await assertSucceeds(saveAction(rejected, submit, team, as(team.id) as unknown as Firestore));
+  const resubmitted = transition(rejected, submit, team);
+  await assertSucceeds(
+    saveAction(
+      resubmitted,
+      { type: 'travelReview', payload: { id: item.id, status: 'APPROVED' } },
+      admin,
+      as(admin.id) as unknown as Firestore,
+    ),
+  );
+  await assertFails(setDoc(doc(as(team.id), 'travelClaims', item.id), body(item)));
+  await assertFails(
+    updateDoc(doc(as(admin.id), 'travelClaims', item.id), { ...fields, status: 'REJECTED' }),
+  );
+  await assertFails(deleteDoc(doc(as(team.id), 'travelClaims', item.id)));
+});

@@ -3141,3 +3141,6 @@ td .member-line {
 .accordion-body { padding-top:20px; }
 .accordion-body[hidden] { display:none; }
 @media (prefers-reduced-motion:reduce) { .accordion-heading svg { transition:none; } }
+
+.travel-pending { background: #fff3cd; color: #745400; }
+.travel-rejected { background: #fbe6e6; color: #9c2929; }

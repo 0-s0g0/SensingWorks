@@ -11,7 +11,9 @@ export type TravelClaim = TravelRoute & {
   id: string;
   userId: string;
   date: string;
-  status: 'DRAFT' | 'SUBMITTED';
+  status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
+  reviewedBy?: string;
+  reviewedAt?: string;
 };
 export type TravelTemplate = TravelRoute & { id: string; userId: string; name: string };
 export const emptyRoute = (): TravelRoute => ({
@@ -42,12 +44,13 @@ export function validateClaim(c: TravelClaim) {
   validateRoute(c);
   if (!validPaymentDate(c.date) || c.id !== `${c.userId}_${c.date}`)
     throw Error('利用日を正しく入力してください。');
-  if (!['DRAFT', 'SUBMITTED'].includes(c.status)) throw Error('申請状態が不正です。');
+  if (!['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED'].includes(c.status))
+    throw Error('申請状態が不正です。');
 }
 export function travelTotal(r: TravelRoute) {
   return (r.busFare + r.trainFare) * (r.trip === 'ROUND_TRIP' ? 2 : 1) + r.parkingFee;
 }
-export function submittedTravelTotal(
+export function approvedTravelTotal(
   claims: TravelClaim[],
   userId: string,
   start: string,
@@ -55,7 +58,14 @@ export function submittedTravelTotal(
 ) {
   return claims
     .filter(
-      (c) => c.userId === userId && c.status === 'SUBMITTED' && c.date >= start && c.date <= end,
+      (c) => c.userId === userId && c.status === 'APPROVED' && c.date >= start && c.date <= end,
     )
     .reduce((sum, c) => sum + travelTotal(c), 0);
 }
+
+export const travelStatusLabels = {
+  DRAFT: '下書き',
+  SUBMITTED: '承認待ち',
+  APPROVED: '承認済',
+  REJECTED: '不承認',
+} as const;

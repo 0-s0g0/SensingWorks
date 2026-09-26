@@ -35,7 +35,7 @@ it('orders by user number and separates saved costs from live claims', () => {
       id: 'pending_2026-09-01',
       userId: 'pending',
       date: '2026-09-01',
-      status: 'SUBMITTED',
+      status: 'APPROVED',
       departure: 'A',
       arrival: 'B',
       trip: 'ONE_WAY',

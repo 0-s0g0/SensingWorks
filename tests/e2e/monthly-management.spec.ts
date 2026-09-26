@@ -47,7 +47,7 @@ test('monthly matrix, TEAM points, recurring AI fees and saved payment amounts',
       id: `${team.id}_2026-09-01`,
       userId: team.id,
       date: '2026-09-01',
-      status: 'SUBMITTED',
+      status: 'APPROVED',
     },
     { ...route, id: `${team.id}_2026-09-02`, userId: team.id, date: '2026-09-02', status: 'DRAFT' },
   ];
@@ -65,7 +65,7 @@ test('monthly matrix, TEAM points, recurring AI fees and saved payment amounts',
   await expect(row).toContainText('20 pt');
   await expect(row).toContainText('¥1,100');
   await expect(summary).not.toContainText(owner.name);
-  const cell = page.getByRole('button', { name: `${team.name} 2026-09-01 申請済み`, exact: true });
+  const cell = page.getByRole('button', { name: `${team.name} 2026-09-01 承認済`, exact: true });
   await expect(cell).toHaveClass(/weekly-submitted/);
   await cell.click();
   await expect(page.getByRole('dialog')).toContainText('¥1,100');

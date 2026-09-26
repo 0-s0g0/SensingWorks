@@ -6,17 +6,19 @@ import { eachDayOfInterval } from 'date-fns';
 import { useStore } from '@/lib/store';
 import { yen } from '@/lib/domain';
 import { format, jstDate } from '@/lib/time';
-import { travelTotal } from '@/lib/travel';
+import { travelStatusLabels, travelTotal } from '@/lib/travel';
 import { monthlySettlement, monthPeriod, teamPointProgress } from '@/lib/settlement';
 import { validPaymentDate } from '@/lib/payment';
 import { Field, Modal, Notice } from './ui/primitives';
 import { Button } from './ui/button';
+import { TravelReview } from './travel-review';
 import { PaymentStatements } from './payment-statements';
 
 export function MonthlyManagement() {
   const { state } = useStore();
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [selected, setSelected] = useState<string | null>(null);
+  const [reviewClaimId, setReviewClaimId] = useState<string | null>(null);
   const [scope, setScope] = useState('TEAM');
   const [onlyAttention, setOnlyAttention] = useState(false);
   const { start, end } = monthPeriod(month);
@@ -47,6 +49,7 @@ export function MonthlyManagement() {
                 if (validPaymentDate(`${e.target.value}-01`)) {
                   setMonth(e.target.value);
                   setSelected(null);
+                  setReviewClaimId(null);
                 }
               }}
             />
@@ -90,9 +93,9 @@ export function MonthlyManagement() {
             <small>差額・下書き・未申告を確認</small>
           </div>
           <div>
-            <span>申請済み交通費</span>
+            <span>承認済み交通費</span>
             <strong>{yen(scoped.reduce((sum, r) => sum + r.travel, 0))}</strong>
-            <small>下書きは含みません</small>
+            <small>承認待ち・下書き・不承認は含みません</small>
           </div>
         </div>
         <div className="settlement-filters">
@@ -159,7 +162,7 @@ export function MonthlyManagement() {
                   <td>
                     {yen(r.statement?.travelCost ?? r.travel)}
                     {r.statement && r.statement.travelCost !== r.travel && (
-                      <small className="cell-note">最新申請 {yen(r.travel)}</small>
+                      <small className="cell-note">最新承認額 {yen(r.travel)}</small>
                     )}
                     {r.noTravel && <small className="cell-note">交通費なし申告済み</small>}
                   </td>
@@ -192,13 +195,14 @@ export function MonthlyManagement() {
       </AccordionCard>
       <AccordionCard title="交通費の月別申請状況" className="weekly-matrix">
         <p>
-          名前と月合計は横スクロールしても表示されます。セルを押すと本人の交通費一覧が開きます。
+          名前と月合計は横スクロールしても表示されます。申請のセルを押すと内容を確認できます。ADMINは承認待ちの申請を承認・不承認にできます。月合計は承認済みのみです。
         </p>
         <div className="weekly-legend">
-          <span className="weekly-submitted">✓ 申請済み</span>
+          <span className="weekly-empty">申請なし</span>
           <span className="weekly-draft">下書き</span>
-          <span className="weekly-empty">— 未申請</span>
-          <span className="weekly-none">交通費なし申告済み</span>
+          <span className="travel-pending">承認待ち</span>
+          <span className="weekly-submitted">承認済</span>
+          <span className="travel-rejected">不承認</span>
         </div>
         <div
           className="weekly-scroll travel-matrix"
@@ -245,30 +249,24 @@ export function MonthlyManagement() {
                   </td>
                   {days.map((day) => {
                     const c = r.claims.find((c) => c.date === day);
-                    const status =
-                      c?.status === 'SUBMITTED'
-                        ? 'submitted'
-                        : c
-                          ? 'draft'
-                          : r.noTravel
-                            ? 'none'
-                            : 'empty';
-                    const label =
-                      status === 'submitted'
-                        ? '申請済み'
-                        : status === 'draft'
-                          ? '下書き'
-                          : status === 'none'
-                            ? '交通費なし申告済み'
-                            : '未申請';
+                    const label = c ? travelStatusLabels[c.status] : '申請なし';
+                    const cellClass = !c
+                      ? 'weekly-empty'
+                      : c.status === 'SUBMITTED'
+                        ? 'travel-pending'
+                        : c.status === 'APPROVED'
+                          ? 'weekly-submitted'
+                          : c.status === 'REJECTED'
+                            ? 'travel-rejected'
+                            : 'weekly-draft';
                     return (
                       <td key={day}>
                         <button
-                          className={`weekly-cell weekly-${status}`}
+                          className={`weekly-cell ${cellClass}`}
                           aria-label={`${r.person.name} ${day} ${label}`}
-                          onClick={() => setSelected(r.person.id)}
+                          onClick={() => (c ? setReviewClaimId(c.id) : setSelected(r.person.id))}
                         >
-                          {status === 'submitted' ? '✓' : status === 'draft' ? '下書き' : '—'}
+                          {label}
                         </button>
                       </td>
                     );
@@ -279,6 +277,13 @@ export function MonthlyManagement() {
           </table>
         </div>
       </AccordionCard>
+      {reviewClaimId && (
+        <TravelReview
+          key={reviewClaimId}
+          claimId={reviewClaimId}
+          close={() => setReviewClaimId(null)}
+        />
+      )}
       {detail && (
         <Modal
           drawer
@@ -324,8 +329,8 @@ export function MonthlyManagement() {
                 <div className="travel-detail-row" key={c.id}>
                   <div>
                     <strong>
-                      {format(c.date, 'M/d')} ·{' '}
-                      {c.status === 'SUBMITTED' ? '申請済み' : '下書き（集計対象外）'}
+                      {format(c.date, 'M/d')} · {travelStatusLabels[c.status]}
+                      {c.status !== 'APPROVED' && '（集計対象外）'}
                     </strong>
                     <p>
                       {c.departure} → {c.arrival}（{c.trip === 'ROUND_TRIP' ? '往復' : '片道'}）

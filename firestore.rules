@@ -195,12 +195,19 @@ service cloud.firestore {
   match /travelClaims/{id} {
    allow read: if owner() || (member() && resource.data.userId == request.auth.uid);
    allow create, update: if ownTravel(request.resource.data)
+    && (!exists(/databases/$(database)/documents/travelClaims/$(id)) || resource.data.status != 'APPROVED')
     && request.resource.data.keys().hasOnly(['userId','date','status','departure','arrival','trip','busFare','trainFare','parkingFee'])
     && travelRoute(request.resource.data)
     && request.resource.data.date.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
     && id == request.auth.uid+'_'+request.resource.data.date
     && request.resource.data.status in ['DRAFT','SUBMITTED']
     && noTravelDeclarationCleared(request.resource.data);
+   allow update: if member() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN'
+    && resource.data.status == 'SUBMITTED'
+    && request.resource.data.status in ['APPROVED','REJECTED']
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','reviewedBy','reviewedAt'])
+    && request.resource.data.reviewedBy == request.auth.uid
+    && request.resource.data.reviewedAt is string && request.resource.data.reviewedAt.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z');
    // A transaction also reads an absent document before creating it.
    allow get: if member() && !exists(/databases/$(database)/documents/travelClaims/$(id)) && id.matches(request.auth.uid+'_[0-9]{4}-[0-9]{2}-[0-9]{2}');
    allow delete: if false;
@@ -295,7 +302,7 @@ service cloud.firestore {
   }
   match /activityLogs/{id} {
    allow read: if member();
-   allow create: if member() && request.resource.data.keys().hasOnly(['userId','action','createdAt']) && request.resource.data.userId==request.auth.uid && request.resource.data.action in ['開始日を更新','担当者を変更','中工程を保存','大工程名を更新','参考小工程を更新','中工程を開始','終了報告を保存','終了報告をレビュー','週報を保存','MID.予定を更新','支払済みを記録','支払明細を保存','月額AI利用料を設定','ユーザー番号を設定','交通費申請を保存','交通費の経路を保存','交通費なしの申告を更新'];
+   allow create: if member() && request.resource.data.keys().hasOnly(['userId','action','createdAt']) && request.resource.data.userId==request.auth.uid && request.resource.data.action in ['開始日を更新','担当者を変更','中工程を保存','大工程名を更新','参考小工程を更新','中工程を開始','終了報告を保存','終了報告をレビュー','週報を保存','MID.予定を更新','支払済みを記録','支払明細を保存','月額AI利用料を設定','ユーザー番号を設定','交通費申請を保存','交通費申請を審査','交通費の経路を保存','交通費なしの申告を更新'];
    allow update,delete: if false;
   }
   match /{document=**} { allow read,write: if false; }
