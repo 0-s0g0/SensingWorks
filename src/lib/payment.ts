@@ -33,7 +33,7 @@ export type PaymentRevision = {
   after: Omit<PaymentStatement, 'id'>;
 };
 export const defaultAmountMode = (role: Profile['role']) =>
-  role === 'OWNER' ? 'manual' : 'points';
+  role === 'OWNER' || role === 'LEADER' ? 'manual' : 'points';
 export const hasManualAmount = (p: PaymentStatement) =>
   p.amountMode === 'manual' && p.manualAmount != null;
 export function validPaymentDate(value: string) {
@@ -100,6 +100,8 @@ export function preparePayment(
   now: string,
   revision: number,
 ): PaymentStatement {
+  if (role === 'LEADER' && !hasManualAmount(p))
+    throw Error('LEADERの作業報酬は定額を入力してください。');
   const calculation = calculatePayment(p, awards);
   return {
     id: p.id,

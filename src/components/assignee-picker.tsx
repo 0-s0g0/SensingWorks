@@ -13,6 +13,9 @@ export function AssigneePicker({ item }: { item: WbsItem }) {
   const [ids, setIds] = useState(item.assigneeIds);
   const [primary, setPrimary] = useState(item.primaryId);
   const [error, setError] = useState('');
+  const participantIds = item.assigneeIds.filter(
+    (id) => state.users.find((u) => u.id === id)?.role !== 'ADMIN',
+  );
   const locked = ['REPORT_SUBMITTED', 'REVIEW', 'COMPLETED'].includes(item.status);
   return (
     <>
@@ -22,15 +25,19 @@ export function AssigneePicker({ item }: { item: WbsItem }) {
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => {
-          setIds(item.assigneeIds);
-          setPrimary(item.primaryId);
+          setIds(participantIds);
+          setPrimary(
+            participantIds.includes(item.primaryId ?? '')
+              ? item.primaryId
+              : (participantIds[0] ?? null),
+          );
           setError('');
           setOpen(true);
         }}
       >
         <span className="assignee-avatars">
-          {item.assigneeIds.length ? (
-            item.assigneeIds.map((id) => {
+          {participantIds.length ? (
+            participantIds.map((id) => {
               const name = state.users.find((u) => u.id === id)?.name ?? '未登録';
               return (
                 <span
@@ -60,7 +67,7 @@ export function AssigneePicker({ item }: { item: WbsItem }) {
           <fieldset disabled={busy || locked} className="assignee-options">
             <legend>担当者 {ids.length} / 6</legend>
             {state.users
-              .filter((u) => (u.active && isParticipant(u)) || ids.includes(u.id))
+              .filter((u) => isParticipant(u) && (u.active || ids.includes(u.id)))
               .map((u) => (
                 <label key={u.id}>
                   <input

@@ -116,3 +116,53 @@ test('manual work amounts preserve the point calculation, audit revisions and ro
   await expect(page.getByRole('radio', { name: '手動で金額を設定' })).toBeChecked();
   await expect(page.getByLabel('手動設定する作業報酬（円）')).toHaveValue('');
 });
+
+test('LEADER has fixed pay and is excluded from the TEAM point total', async ({ page }) => {
+  const state = createSeed();
+  const leader = state.users[0];
+  leader.role = 'LEADER';
+  const owner = state.users.find((u) => u.role === 'OWNER')!;
+  state.pointAwards = [
+    {
+      id: 'leader',
+      userId: leader.id,
+      missionId: 'm',
+      points: 900,
+      awardedAt: '2026-09-10T00:00:00Z',
+      approvedBy: owner.id,
+    },
+    {
+      id: 'team',
+      userId: state.users[1].id,
+      missionId: 'm',
+      points: 1500,
+      awardedAt: '2026-09-10T00:00:00Z',
+      approvedBy: owner.id,
+    },
+  ];
+  await page.addInitScript(
+    ({ state, userId }) => {
+      if (!localStorage.getItem('sensingworks-firebase-demo-v2'))
+        localStorage.setItem('sensingworks-firebase-demo-v2', JSON.stringify({ state, userId }));
+    },
+    { state, userId: owner.id },
+  );
+  await page.goto('/admin');
+  await page.getByLabel('管理の対象月').fill('2026-09');
+  await expect(page.getByLabel('TEAMの獲得ポイント', { exact: true })).toContainText('1,500 pt');
+  await expect(page.getByLabel('TEAMの獲得ポイント', { exact: true })).toContainText(
+    '残り 6,000 pt',
+  );
+  await page.getByLabel('精算の表示対象').selectOption('LEADER');
+  await page
+    .getByRole('table', { name: '月末精算一覧' })
+    .getByRole('button', { name: new RegExp(leader.name) })
+    .click();
+  await expect(page.getByRole('radio', { name: 'ポイントから自動計算' })).toBeDisabled();
+  await page.getByLabel('定額作業報酬（円）').fill('40000');
+  await page.getByRole('button', { name: '明細を保存', exact: true }).click();
+  await expect(page.getByLabel('保存済みの対象期間')).toHaveValue(
+    `${leader.id}_2026-09-01_2026-09-30`,
+  );
+  await expect(page.getByLabel('支払明細プレビュー')).toContainText('40,000');
+});

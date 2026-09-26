@@ -70,3 +70,24 @@ export function monthlySettlement(state: State, month: string) {
         a.person.name.localeCompare(b.person.name, 'ja'),
     );
 }
+
+export function teamPointProgress(state: State, month: string) {
+  const { start, end } = monthPeriod(month);
+  const teamIds = new Set(state.users.filter((u) => u.role === 'TEAM').map((u) => u.id));
+  const earned = state.pointAwards
+    .filter(
+      (a) =>
+        teamIds.has(a.userId) &&
+        format(a.awardedAt, 'yyyy-MM-dd') >= start &&
+        format(a.awardedAt, 'yyyy-MM-dd') <= end,
+    )
+    .reduce((sum, a) => sum + a.points, 0);
+  const target = 7500;
+  return {
+    earned,
+    target,
+    remaining: Math.max(0, target - earned),
+    excess: Math.max(0, earned - target),
+    percent: (earned / target) * 100,
+  };
+}

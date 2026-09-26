@@ -181,3 +181,34 @@ it('retains an old statement as the first before-record without inventing histor
   expect(next.paymentRevisions[0].after.revision).toBe(1);
   expect(next.paymentStatements[0].id).toBe(id);
 });
+
+it('requires fixed LEADER pay and never ties it to earned points', () => {
+  const state = createSeed();
+  const leader = state.users.find((u) => u.id === item.userId)!;
+  leader.role = 'LEADER';
+  const owner = state.users.find((u) => u.role === 'OWNER')!;
+  expect(defaultAmountMode('LEADER')).toBe('manual');
+  for (const invalid of [item, { ...item, amountMode: 'manual' as const, manualAmount: null }]) {
+    expect(() => transition(state, { type: 'payment', payload: { item: invalid } }, owner)).toThrow(
+      /定額/,
+    );
+  }
+  for (const points of [0, 1000]) {
+    state.pointAwards = [award('2026-09-10', points)];
+    const fixed = {
+      ...item,
+      amountMode: 'manual' as const,
+      manualAmount: 40000,
+      changeReason: 'LEADER定額報酬',
+    };
+    const next = transition(state, { type: 'payment', payload: { item: fixed } }, owner);
+    expect(next.paymentStatements[0].calculation).toMatchObject({
+      points,
+      workAmount: 40000,
+      total: 44200,
+    });
+    expect(() =>
+      transition(state, { type: 'payment', payload: { item: fixed } }, leader),
+    ).toThrow();
+  }
+});

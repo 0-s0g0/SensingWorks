@@ -63,7 +63,7 @@ function PaymentEditor({ userId, month }: { userId: string; month?: string }) {
         </Field>
       </div>
       <PaymentForm
-        key={JSON.stringify(saved) + id}
+        key={JSON.stringify(saved) + id + state.users.find((u) => u.id === userId)!.role}
         initial={
           saved ?? {
             id,
@@ -120,13 +120,19 @@ function PaymentForm({
   save: (p: PaymentStatement) => Promise<void>;
 }) {
   const { state } = useStore();
-  const [item, setItem] = useState(initial);
+  const isLeader = state.users.find((u) => u.id === initial.userId)?.role === 'LEADER';
+  const [item, setItem] = useState<PaymentStatement>(() =>
+    isLeader
+      ? { ...initial, amountMode: 'manual', changeReason: initial.changeReason || 'LEADER定額報酬' }
+      : initial,
+  );
   const [outputDate, setOutputDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [message, setMessage] = useState('');
   const [working, setWorking] = useState(false);
   let result: ReturnType<typeof calculatePayment> | undefined;
   let error = '';
   try {
+    if (isLeader && !hasManualAmount(item)) throw Error('LEADERの定額作業報酬を入力してください。');
     result = calculatePayment(item, state.pointAwards);
   } catch (e) {
     error = (e as Error).message;
@@ -176,6 +182,7 @@ function PaymentForm({
           <input
             type="radio"
             name="amount-mode"
+            disabled={isLeader}
             checked={(item.amountMode ?? 'points') === 'points'}
             onChange={() =>
               setItem({ ...item, amountMode: 'points', manualAmount: null, changeReason: '' })
@@ -192,11 +199,11 @@ function PaymentForm({
               setItem({ ...item, amountMode: 'manual', manualAmount: null, changeReason: '' })
             }
           />
-          手動で金額を設定
+          {isLeader ? '定額で支払い（ポイント数に関係なし）' : '手動で金額を設定'}
         </label>
       </fieldset>
       {item.amountMode === 'manual' && (
-        <Field label="手動設定する作業報酬（円）">
+        <Field label={isLeader ? '定額作業報酬（円）' : '手動設定する作業報酬（円）'}>
           <input
             type="number"
             min={0}
@@ -205,7 +212,8 @@ function PaymentForm({
             value={
               item.manualAmount == null || Number.isNaN(item.manualAmount) ? '' : item.manualAmount
             }
-            placeholder="未入力ならポイントから計算"
+            required={isLeader}
+            placeholder={isLeader ? '定額を入力（0円も可）' : '未入力ならポイントから計算'}
             onChange={(e) =>
               setItem({
                 ...item,
@@ -226,7 +234,10 @@ function PaymentForm({
         />
       </Field>
       <p>
-        AI利用料と交通費は、作業報酬に別途加算します。手動金額が未入力の場合はポイント計算額を採用します。0円の指定もできます。
+        AI利用料と交通費は、作業報酬に別途加算します。
+        {isLeader
+          ? 'LEADERは定額の入力が必要です。0円も指定できます。'
+          : '手動金額が未入力の場合はポイント計算額を採用します。0円の指定もできます。'}
       </p>
       <div className="form-grid">
         <Field label="出力日">

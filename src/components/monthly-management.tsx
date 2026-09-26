@@ -7,7 +7,7 @@ import { useStore } from '@/lib/store';
 import { yen } from '@/lib/domain';
 import { format, jstDate } from '@/lib/time';
 import { travelTotal } from '@/lib/travel';
-import { monthlySettlement, monthPeriod } from '@/lib/settlement';
+import { monthlySettlement, monthPeriod, teamPointProgress } from '@/lib/settlement';
 import { validPaymentDate } from '@/lib/payment';
 import { Field, Modal, Notice } from './ui/primitives';
 import { Button } from './ui/button';
@@ -23,8 +23,9 @@ export function MonthlyManagement() {
   const days = eachDayOfInterval({ start: jstDate(start), end: jstDate(end) }).map((d) =>
     format(d, 'yyyy-MM-dd'),
   );
+  const progress = teamPointProgress(state, month);
   const people = monthlySettlement(state, month);
-  const scoped = people.filter((r) => scope === 'ALL' || r.person.role === 'TEAM');
+  const scoped = people.filter((r) => scope === 'ALL' || r.person.role === scope);
   const rows = scoped.filter((r) => !onlyAttention || r.issues.length > 0);
   const detail = people.find((r) => r.person.id === selected);
   const total = scoped.reduce((sum, r) => sum + (r.result?.total ?? 0), 0);
@@ -51,6 +52,27 @@ export function MonthlyManagement() {
             />
           </Field>
         </div>
+        <section aria-label="TEAMの獲得ポイント" className="detail-section">
+          <h3>TEAMの獲得ポイント · {month}</h3>
+          <p>
+            <strong>{progress.earned.toLocaleString()} pt</strong> /{' '}
+            {progress.target.toLocaleString()} pt
+          </p>
+          <progress
+            aria-label="TEAMのポイント達成率"
+            max={progress.target}
+            value={Math.min(progress.earned, progress.target)}
+          />
+          <p>
+            達成率 {progress.percent.toFixed(1)}% ·{' '}
+            {progress.excess > 0
+              ? `超過 ${progress.excess.toLocaleString()} pt`
+              : `残り ${progress.remaining.toLocaleString()} pt`}
+          </p>
+          <p className="help-text">
+            対象月に承認された、現在のTEAMメンバー全員の合計です。LEADER・OWNER・ADMINは含みません。
+          </p>
+        </section>
         <div className="settlement-stats">
           <div>
             <span>保存済み明細の支払合計</span>
@@ -77,7 +99,8 @@ export function MonthlyManagement() {
           <Field label="精算の表示対象">
             <select value={scope} onChange={(e) => setScope(e.target.value)}>
               <option value="TEAM">TEAMメンバーのみ</option>
-              <option value="ALL">全参加者（OWNERを含む）</option>
+              <option value="LEADER">LEADERメンバーのみ</option>
+              <option value="ALL">全参加者（LEADER・OWNERを含む）</option>
             </select>
           </Field>
           <label className="attention-filter">
@@ -122,7 +145,9 @@ export function MonthlyManagement() {
                     {r.statement && (
                       <small className="cell-note">
                         {r.statement.amountMode === 'manual' && r.statement.manualAmount != null
-                          ? '手動設定'
+                          ? r.statement.roleAtSave === 'LEADER'
+                            ? '定額支払い'
+                            : '手動設定'
                           : 'ポイント計算'}
                       </small>
                     )}

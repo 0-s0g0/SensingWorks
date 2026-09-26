@@ -14,7 +14,7 @@ service cloud.firestore {
   function url(s) { return s is string && (s == '' || s.matches('https?://[^\\s]+')); }
   function m(id) { return get(/databases/$(database)/documents/wbsItems/$(id)).data; }
   function ma(id) { return getAfter(/databases/$(database)/documents/wbsItems/$(id)).data; }
-  function assigned(item) { return request.auth.uid in item.assigneeIds; }
+  function assigned(item) { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role != 'ADMIN' && request.auth.uid in item.assigneeIds; }
   function amountAt(values, ids, n) { return ids.size() > n ? values[ids[n]] : 0; }
   function sum(values, ids) { return amountAt(values,ids,0)+amountAt(values,ids,1)+amountAt(values,ids,2)+amountAt(values,ids,3)+amountAt(values,ids,4)+amountAt(values,ids,5); }
   function intAt(values,ids,n) { return ids.size() <= n || validInt(values[ids[n]]); }
@@ -63,7 +63,7 @@ service cloud.firestore {
    allow get: if signed() && (id==request.auth.uid || member());
    allow list: if member();
    allow create: if signed() && id==request.auth.uid && userAllowed() && request.resource.data.keys().hasOnly(['name','role','active']) && nonEmpty(request.resource.data.name) && request.resource.data.role=='TEAM' && request.resource.data.active==true;
-   allow update: if owner() && request.resource.data.keys().hasOnly(['name','role','active']) && nonEmpty(request.resource.data.name) && request.resource.data.role in ['TEAM','OWNER','ADMIN'] && request.resource.data.active is bool && (id!=request.auth.uid || (request.resource.data.role in ['OWNER','ADMIN'] && request.resource.data.active));
+   allow update: if owner() && request.resource.data.keys().hasOnly(['name','role','active']) && nonEmpty(request.resource.data.name) && request.resource.data.role in ['TEAM','LEADER','OWNER','ADMIN'] && request.resource.data.active is bool && (id!=request.auth.uid || (request.resource.data.role in ['OWNER','ADMIN'] && request.resource.data.active));
    allow delete: if false;
   }
   match /loginSessions/{id} {
@@ -176,7 +176,7 @@ service cloud.firestore {
     && d.trip in ['ONE_WAY','ROUND_TRIP']
     && validInt(d.busFare) && d.busFare <= 1000000 && validInt(d.trainFare) && d.trainFare <= 1000000 && validInt(d.parkingFee) && d.parkingFee <= 1000000;
   }
-  function ownTravel(d) { return member() && d.userId == request.auth.uid && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['TEAM','OWNER']; }
+  function ownTravel(d) { return member() && d.userId == request.auth.uid && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['TEAM','LEADER','OWNER']; }
   function noTravelDeclarationCleared(d) {
    let month = d.date.split('-')[0]+'-'+d.date.split('-')[1];
    let path = /databases/$(database)/documents/travelDeclarations/$(request.auth.uid+'_'+month);
@@ -224,6 +224,7 @@ service cloud.firestore {
   }
   function paymentBase(id, d) {
    return get(/databases/$(database)/documents/users/$(d.userId)).data.role != 'ADMIN'
+    && (get(/databases/$(database)/documents/users/$(d.userId)).data.role != 'LEADER' || (d.get('amountMode', '') == 'manual' && validInt(d.get('manualAmount', null))))
     && d.periodStart.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
     && d.periodEnd.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
     && d.periodStart <= d.periodEnd

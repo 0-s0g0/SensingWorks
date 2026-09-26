@@ -21,7 +21,7 @@ export type AvailabilityStatus = 'AVAILABLE' | 'MAYBE' | 'UNAVAILABLE';
 export type Profile = {
   id: string;
   name: string;
-  role: 'TEAM' | 'OWNER' | 'ADMIN';
+  role: 'TEAM' | 'LEADER' | 'OWNER' | 'ADMIN';
   active: boolean;
 };
 export const canManage = (user: Pick<Profile, 'role'>) =>
@@ -291,7 +291,8 @@ export function transition(state: State, action: Action, actor: Profile): State 
     return m;
   };
   const assigned = (m: WbsItem) => {
-    if (!m.assigneeIds.includes(actor.id)) throw Error('担当者のみ操作できます。');
+    if (!isParticipant(actor) || !m.assigneeIds.includes(actor.id))
+      throw Error('担当者のみ操作できます。');
   };
   switch (action.type) {
     case 'travelDeclaration': {

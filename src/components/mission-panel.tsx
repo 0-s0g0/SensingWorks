@@ -30,10 +30,13 @@ export const reportFields = [
 ] as const;
 export function People({ item, shares }: { item: WbsItem; shares?: Record<string, number> }) {
   const { state } = useStore();
+  const ids = item.assigneeIds.filter(
+    (id) => state.users.find((u) => u.id === id)?.role !== 'ADMIN',
+  );
   return (
     <div className="people-list">
-      {item.assigneeIds.length ? (
-        item.assigneeIds.map((id) => (
+      {ids.length ? (
+        ids.map((id) => (
           <span key={id} title={id === item.primaryId ? '主担当' : '共同担当'}>
             {state.users.find((u) => u.id === id)?.name ?? '未登録'}
             {id === item.primaryId && <small> 主</small>}

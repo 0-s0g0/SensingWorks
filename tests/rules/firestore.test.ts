@@ -786,3 +786,48 @@ it('atomically saves payment revisions, rejects forged metadata and protects his
   expect(second.before).toEqual(saved);
   expect(second.after.calculation.total).toBe(4200);
 });
+
+it('lets managers assign LEADER while preserving TEAM access and enforcing fixed pay', async () => {
+  const state = createSeed();
+  const leader = state.users.find((u) => u.id === 'demo-aoki')!;
+  const owner = state.users.find((u) => u.role === 'OWNER')!;
+  const db = as(owner.id);
+  await assertFails(updateDoc(doc(as(leader.id), 'users', leader.id), { role: 'LEADER' }));
+  await assertSucceeds(updateDoc(doc(db, 'users', leader.id), { role: 'LEADER' }));
+  leader.role = 'LEADER';
+  await assertSucceeds(getDocs(collection(as(leader.id), 'wbsItems')));
+  await assertFails(getDocs(collection(as(leader.id), 'paymentStatements')));
+  await assertFails(updateDoc(doc(as(leader.id), 'users', 'demo-tanaka'), { role: 'LEADER' }));
+  await assertSucceeds(
+    setDoc(doc(as(leader.id), 'travelDeclarations', `${leader.id}_2026-09`), {
+      userId: leader.id,
+      month: '2026-09',
+      status: 'NONE',
+    }),
+  );
+  const item = {
+    id: `${leader.id}_2026-09-01_2026-09-30`,
+    userId: leader.id,
+    periodStart: '2026-09-01',
+    periodEnd: '2026-09-30',
+    aiFee: 0,
+    travelCost: 0,
+    pointRate: 100,
+    variableCap: 10000,
+  };
+  await assertFails(setDoc(doc(db, 'paymentStatements', item.id), body(item)));
+  const fixed = {
+    ...item,
+    amountMode: 'manual' as const,
+    manualAmount: 40000,
+    changeReason: 'LEADER定額報酬',
+  };
+  await assertSucceeds(
+    saveAction(
+      state,
+      { type: 'payment', payload: { item: fixed } },
+      owner,
+      db as unknown as Firestore,
+    ),
+  );
+});

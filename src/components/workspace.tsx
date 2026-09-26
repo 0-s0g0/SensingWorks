@@ -10,7 +10,7 @@ import { weeklyFields, currentReportWeek, weeklyStart, weeklyEnd } from '@/lib/w
 import { LoginHistory } from './login-history';
 import { AllowedAccounts } from './allowed-accounts';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   Download,
@@ -55,7 +55,7 @@ import { Button } from './ui/button';
 import { PageHeading, Avatar, Progress, Badge, Empty, Field, Notice } from './ui/primitives';
 import { WbsPage } from './wbs';
 import { defaultAccess } from '@/lib/access-config';
-import { People } from './mission-panel';
+import { People, MissionPanel } from './mission-panel';
 import { AvailabilityPage } from './availability';
 const nav = [
   { href: '/', name: 'ホーム', icon: LayoutDashboard },
@@ -74,10 +74,15 @@ export function Workspace() {
 }
 function Shell() {
   const { state, user, ready, authenticated, demo, error, switchUser, logout } = useStore(),
+    router = useRouter(),
     pathname = usePathname(),
     path = pathname.replace(/\/$/, '') || '/',
     [mobile, setMobile] = useState(false);
   useEffect(() => setMobile(false), [path]);
+  useEffect(() => {
+    if (ready && authenticated && user.role === 'ADMIN' && path !== '/admin')
+      router.replace('/admin');
+  }, [ready, authenticated, user.role, path, router]);
   if (!ready)
     return (
       <div className="loading">
@@ -86,16 +91,21 @@ function Shell() {
       </div>
     );
   if (!authenticated) return <Login error={error} />;
-  const navigation = canManage(user)
-    ? [...nav, { href: '/admin', name: '管理', icon: Settings2 }]
-    : nav;
+  const managementNav = { href: '/admin', name: '管理', icon: Settings2 };
+  const navigation =
+    user.role === 'ADMIN'
+      ? [managementNav]
+      : canManage(user)
+        ? [...nav, { href: '/admin', name: '管理', icon: Settings2 }]
+        : nav;
   const missions = missionsOf(state),
     percent = Math.round(
       (missions.filter((m) => m.status === 'COMPLETED').length / Math.max(1, missions.length)) *
         100,
     );
   let content: ReactNode;
-  if (path === '/') content = <Home />;
+  if (user.role === 'ADMIN') content = <AdminPage />;
+  else if (path === '/') content = <Home />;
   else if (path === '/wbs') content = <WbsPage />;
   else if (path === '/reports') content = <ReportsPage />;
   else if (path === '/availability') content = <AvailabilityPage />;
@@ -116,7 +126,7 @@ function Shell() {
         />
       )}
       <aside className={`sidebar ${mobile ? 'visible' : ''}`}>
-        <Link href="/" className="brand">
+        <Link href={user.role === 'ADMIN' ? '/admin' : '/'} className="brand">
           <span className="brand-icon">
             <Radio size={23} />
           </span>
@@ -187,7 +197,13 @@ function Shell() {
                 {state.users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.name} /{' '}
-                    {u.role === 'ADMIN' ? 'Admin' : u.role === 'OWNER' ? 'Owner' : 'Team'}
+                    {u.role === 'ADMIN'
+                      ? 'Admin'
+                      : u.role === 'OWNER'
+                        ? 'Owner'
+                        : u.role === 'LEADER'
+                          ? 'Leader'
+                          : 'Team'}
                   </option>
                 ))}
               </select>
@@ -255,7 +271,7 @@ function Stat({ label, value, note }: { label: string; value: ReactNode; note?: 
     </div>
   );
 }
-function MissionTable({ items }: { items: WbsItem[] }) {
+function MissionTable({ items, onOpen }: { items: WbsItem[]; onOpen?: (id: string) => void }) {
   const { state } = useStore();
   return items.length ? (
     <div className="panel work-table">
@@ -271,10 +287,17 @@ function MissionTable({ items }: { items: WbsItem[] }) {
         return (
           <div className="work-row" key={m.id}>
             <div>
-              <Link className="work-title" href={`/wbs/#${m.id}`}>
-                <small>{m.wbsCode}</small>
-                <strong>{m.title}</strong>
-              </Link>
+              {onOpen ? (
+                <button className="member-detail-button work-title" onClick={() => onOpen(m.id)}>
+                  <small>{m.wbsCode}</small>
+                  <strong>{m.title}</strong>
+                </button>
+              ) : (
+                <Link className="work-title" href={`/wbs/#${m.id}`}>
+                  <small>{m.wbsCode}</small>
+                  <strong>{m.title}</strong>
+                </Link>
+              )}
               <p className="muted">{phaseName(state, m)}</p>
             </div>
             <Badge status={effectiveStatus(m, state.wbsItems)} />
@@ -675,6 +698,7 @@ function ProfilePage() {
 }
 function AdminPage() {
   const { state, user, demo, act, busy } = useStore(),
+    [selectedMission, setSelectedMission] = useState<string | null>(null),
     [tab, setTab] = useState<'settlement' | 'reviews' | 'accounts'>('settlement'),
     [message, setMessage] = useState(''),
     [domains, setDomains] = useState(defaultAccess.allowedDomains.join('\n')),
@@ -703,6 +727,13 @@ function AdminPage() {
         description="月末の精算、申請の確認、アカウント設定をまとめて管理します。"
       />
       <Notice text={message} />
+      {selectedMission && (
+        <MissionPanel
+          key={selectedMission}
+          id={selectedMission}
+          close={() => setSelectedMission(null)}
+        />
+      )}
       <div className="management-tabs" role="tablist" aria-label="管理メニュー">
         {(
           [
@@ -759,7 +790,7 @@ function AdminPage() {
         hidden={tab !== 'reviews'}
       >
         <AccordionCard title={`レビュー待ち ${waiting.length}件`}>
-          <MissionTable items={waiting} />
+          <MissionTable items={waiting} onOpen={setSelectedMission} />
         </AccordionCard>
         <WeeklyMatrix collapsible />
         <AccordionCard title="Owner専用・内部報酬">
@@ -780,9 +811,12 @@ function AdminPage() {
                   return (
                     <tr key={r.id}>
                       <td>
-                        <Link href={`/wbs/#${r.id}`}>
+                        <button
+                          className="member-detail-button"
+                          onClick={() => setSelectedMission(r.id)}
+                        >
                           {m?.wbsCode} {m?.title}
-                        </Link>
+                        </button>
                       </td>
                       <td>{m?.pointValue}pt</td>
                       <td>{yen(r.totalAmount)}</td>
@@ -955,12 +989,13 @@ function AdminPage() {
                         value={u.role}
                         onChange={(e) =>
                           updateUser(u.id, {
-                            role: e.target.value as 'TEAM' | 'OWNER' | 'ADMIN',
+                            role: e.target.value as 'TEAM' | 'LEADER' | 'OWNER' | 'ADMIN',
                             active: u.active,
                           }).catch((e) => setMessage(e.message))
                         }
                       >
                         <option>TEAM</option>
+                        <option value="LEADER">LEADER（定額支払い）</option>
                         <option>OWNER</option>
                         <option value="ADMIN">ADMIN（管理専用・参加しない）</option>
                       </select>
