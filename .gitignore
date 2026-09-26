@@ -11,3 +11,5 @@ out/
 *-debug.log
 
 .next-e2e/
+
+.local-backups/

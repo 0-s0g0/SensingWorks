@@ -27,7 +27,7 @@ service cloud.firestore {
   function unlocked(d) { return depDone(d,0)&&depDone(d,1)&&depDone(d,2)&&depDone(d,3)&&depDone(d,4)&&depDone(d,5); }
   function assigneeValid(ids,n) { return ids.size() <= n || (get(/databases/$(database)/documents/users/$(ids[n])).data.active == true && get(/databases/$(database)/documents/users/$(ids[n])).data.role != 'ADMIN'); }
   function validStart(d) {
-   return !('startDate' in d) || (d.startDate is string && (d.startDate=='' || (d.startDate.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') && d.startDate<=d.deadline)));
+   return !('startDate' in d) || (d.startDate is string && (d.startDate=='' || (d.startDate.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') && (d.deadline=='' || d.startDate<=d.deadline))));
   }
   function scheduleUpdate() {
    return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['startDate']) && validStart(request.resource.data) && (owner() || assigned(resource.data));
@@ -35,7 +35,7 @@ service cloud.firestore {
   function basicWbs(d) {
    return d.keys().hasOnly(['projectId','parentId','wbsCode','level','title','description','pointValue','status','deadline','startDate','assigneeIds','primaryId','dependencyIds','autoUnlock','order','completedAt','approvedBy','finalPoints'])
     && validStart(d) && d.projectId == 'wifi-poc' && d.level in [1,2,3] && nonEmpty(d.title) && d.description is string && d.description.size() <= 20000
-    && d.wbsCode is string && d.order is number && d.deadline is string && d.deadline.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+    && d.wbsCode is string && d.order is number && d.deadline is string && (d.deadline=='' || d.deadline.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}'))
     && d.autoUnlock is bool && d.assigneeIds is list && d.assigneeIds.size() <= 6 && d.assigneeIds.toSet().size() == d.assigneeIds.size()
     && d.dependencyIds is list && d.dependencyIds.size() <= 6 && d.dependencyIds.toSet().size() == d.dependencyIds.size()
     && validInt(d.pointValue) && (d.level == 2 ? d.pointValue > 0 : d.pointValue == 0)
@@ -171,6 +171,46 @@ service cloud.firestore {
    allow create: if owner() && awardValid(id);
    allow update,delete: if false;
   }
+  function travelRoute(d) {
+   return nonEmpty(d.departure) && d.departure.size() <= 200 && nonEmpty(d.arrival) && d.arrival.size() <= 200
+    && d.trip in ['ONE_WAY','ROUND_TRIP']
+    && validInt(d.busFare) && d.busFare <= 1000000 && validInt(d.trainFare) && d.trainFare <= 1000000 && validInt(d.parkingFee) && d.parkingFee <= 1000000;
+  }
+  function ownTravel(d) { return member() && d.userId == request.auth.uid && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['TEAM','OWNER']; }
+  match /travelClaims/{id} {
+   allow read: if owner() || (member() && resource.data.userId == request.auth.uid);
+   allow create, update: if ownTravel(request.resource.data)
+    && request.resource.data.keys().hasOnly(['userId','date','status','departure','arrival','trip','busFare','trainFare','parkingFee'])
+    && travelRoute(request.resource.data)
+    && request.resource.data.date.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
+    && id == request.auth.uid+'_'+request.resource.data.date
+    && request.resource.data.status in ['DRAFT','SUBMITTED'];
+   // A transaction also reads an absent document before creating it.
+   allow get: if member() && !exists(/databases/$(database)/documents/travelClaims/$(id)) && id.matches(request.auth.uid+'_[0-9]{4}-[0-9]{2}-[0-9]{2}');
+   allow delete: if false;
+  }
+  match /travelTemplates/{id} {
+   allow read: if member() && resource.data.userId == request.auth.uid;
+   allow get: if member() && !exists(/databases/$(database)/documents/travelTemplates/$(id)) && id.matches(request.auth.uid+'_.*');
+   allow create, update: if ownTravel(request.resource.data)
+    && request.resource.data.keys().hasOnly(['userId','name','departure','arrival','trip','busFare','trainFare','parkingFee'])
+    && travelRoute(request.resource.data) && nonEmpty(request.resource.data.name) && request.resource.data.name.size() <= 100
+    && id == request.auth.uid+'_'+request.resource.data.name;
+   allow delete: if false;
+  }
+  match /paymentStatements/{id} {
+   allow read: if owner();
+   allow create, update: if owner()
+    && request.resource.data.keys().hasOnly(['userId','periodStart','periodEnd','aiFee','travelCost','pointRate','variableCap'])
+    && get(/databases/$(database)/documents/users/$(request.resource.data.userId)).data.role != 'ADMIN'
+    && request.resource.data.periodStart.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
+    && request.resource.data.periodEnd.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])')
+    && request.resource.data.periodStart <= request.resource.data.periodEnd
+    && id == request.resource.data.userId+'_'+request.resource.data.periodStart+'_'+request.resource.data.periodEnd
+    && validInt(request.resource.data.aiFee) && validInt(request.resource.data.travelCost)
+    && validInt(request.resource.data.pointRate) && validInt(request.resource.data.variableCap);
+   allow delete: if false;
+  }
   match /rewardPrivate/{id} {
    allow read: if owner();
    allow create,update: if owner() && request.resource.data.keys().hasOnly(['missionId','totalAmount','allocations','approvedAt','approvedBy','paymentStatus']) && request.resource.data.missionId==id && validInt(request.resource.data.totalAmount) && ma(id).level==2 && (
@@ -193,7 +233,7 @@ service cloud.firestore {
   }
   match /activityLogs/{id} {
    allow read: if member();
-   allow create: if member() && request.resource.data.keys().hasOnly(['userId','action','createdAt']) && request.resource.data.userId==request.auth.uid && request.resource.data.action in ['開始日を更新','担当者を変更','中工程を保存','大工程名を更新','参考小工程を更新','中工程を開始','終了報告を保存','終了報告をレビュー','週報を保存','MID.予定を更新','支払済みを記録'];
+   allow create: if member() && request.resource.data.keys().hasOnly(['userId','action','createdAt']) && request.resource.data.userId==request.auth.uid && request.resource.data.action in ['開始日を更新','担当者を変更','中工程を保存','大工程名を更新','参考小工程を更新','中工程を開始','終了報告を保存','終了報告をレビュー','週報を保存','MID.予定を更新','支払済みを記録','支払明細を保存','交通費申請を保存','交通費の経路を保存'];
    allow update,delete: if false;
   }
   match /{document=**} { allow read,write: if false; }

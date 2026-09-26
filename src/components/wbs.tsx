@@ -368,7 +368,7 @@ export function WbsPage() {
                                 </button>
                               )}
                             </div>
-                            <small title="期限">〜 {m.deadline}</small>
+                            <small title="期限">〜 {m.deadline || '未設定'}</small>
                           </div>
                         </div>
                         {expanded.has(m.id) &&
@@ -450,10 +450,10 @@ export function WbsPage() {
                 name="startDate"
                 type="date"
                 defaultValue={scheduleEdit.startDate ?? ''}
-                max={scheduleEdit.deadline}
+                max={scheduleEdit.deadline || undefined}
               />
             </Field>
-            <p>期限：{scheduleEdit.deadline}。空欄にすると未設定に戻せます。</p>
+            <p>期限：{scheduleEdit.deadline || '未設定'}。空欄にすると未設定に戻せます。</p>
             <Notice text={message} />
             <Button disabled={busy}>保存</Button>
           </form>

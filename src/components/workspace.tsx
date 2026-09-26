@@ -1,17 +1,19 @@
 'use client';
+import { TravelPage } from './travel';
+import { PaymentStatements } from './payment-statements';
 import { canManage } from '@/lib/domain';
 import { isParticipant } from '@/lib/domain';
 import { downloadCsv, weeklyCsv } from '@/lib/csv';
 import { WeeklyMatrix } from './weekly-matrix';
 import { weeklyFields, currentReportWeek, weeklyStart, weeklyEnd } from '@/lib/weekly';
 import { LoginHistory } from './login-history';
+import { AllowedAccounts } from './allowed-accounts';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   Download,
   Radio,
-  ChevronDown,
   ChevronRight,
   LayoutDashboard,
   FolderTree,
@@ -40,7 +42,14 @@ import {
   type WbsItem,
 } from '@/lib/domain';
 import { format, jstDate } from '@/lib/time';
-import { loginGoogle, initializeProject, readAccess, saveAccess, updateUser } from '@/lib/firebase';
+import {
+  loginGoogle,
+  initializeProject,
+  readAccess,
+  saveAllowedDomains,
+  changeAllowedEmail,
+  updateUser,
+} from '@/lib/firebase';
 import { Button } from './ui/button';
 import { PageHeading, Avatar, Progress, Badge, Empty, Field, Notice } from './ui/primitives';
 import { WbsPage } from './wbs';
@@ -52,6 +61,7 @@ const nav = [
   { href: '/wbs', name: 'WBS', icon: FolderTree },
   { href: '/reports', name: '週報', icon: FileText },
   { href: '/availability', name: 'MID.予定', icon: CalendarDays },
+  { href: '/travel', name: '交通費', icon: FileText },
   { href: '/profile', name: 'マイ実績', icon: Trophy },
 ];
 export function Workspace() {
@@ -88,6 +98,7 @@ function Shell() {
   else if (path === '/wbs') content = <WbsPage />;
   else if (path === '/reports') content = <ReportsPage />;
   else if (path === '/availability') content = <AvailabilityPage />;
+  else if (path === '/travel') content = <TravelPage key={user.id} />;
   else if (path === '/profile') content = <ProfilePage />;
   else if (path === '/admin' && canManage(user)) content = <AdminPage />;
   else
@@ -111,16 +122,6 @@ function Shell() {
           SensingWorks
           <span className="brand-dot" />
         </Link>
-        <div className="project-switch">
-          <span className="project-icon">
-            <Radio size={19} />
-          </span>
-          <div>
-            <strong>{state.projects[0]?.name ?? 'Wi-FiセンシングPoC'}</strong>
-            <small>2026.09 — 2027.03</small>
-          </div>
-          <ChevronDown size={14} />
-        </div>
         <div className="nav-caption">{user.role}</div>
         <nav aria-label="メインナビゲーション">
           {navigation.map((n) => (
@@ -675,13 +676,17 @@ function AdminPage() {
   const { state, user, demo, act, busy } = useStore(),
     [message, setMessage] = useState(''),
     [domains, setDomains] = useState(defaultAccess.allowedDomains.join('\n')),
-    [emails, setEmails] = useState('');
+    [emails, setEmails] = useState(''),
+    [savedEmails, setSavedEmails] = useState<string[]>([]),
+    [accessLoaded, setAccessLoaded] = useState(false),
+    [savingAccess, setSavingAccess] = useState(false);
   useEffect(() => {
     if (!demo)
       readAccess()
         .then((c) => {
           setDomains(c.allowedDomains.join('\n'));
-          setEmails(c.allowedEmails.join('\n'));
+          setSavedEmails(c.allowedEmails);
+          setAccessLoaded(true);
         })
         .catch((e) => setMessage(e.message));
   }, [demo]);
@@ -698,11 +703,12 @@ function AdminPage() {
       <Notice text={message} />
       <WeeklyMatrix />
       <LoginHistory />
-      {missionsOf(state).length < 24 && (
+      <PaymentStatements />
+      {missionsOf(state).length < 57 && (
         <section className="panel detail-section">
           <h2>プロジェクトの初期設定</h2>
           <p>
-            8大工程と24中工程のたたき台を登録します。既存の工程は保持し、未登録分のみ追加します。架空の実績は登録しません。
+            9大工程・57中工程・211小工程の添付WBSを登録します。既存の工程は保持し、未登録分のみ追加します。開始日・期限・担当は未設定、内部報酬は未確定の0円で登録します。
           </p>
           <Button
             disabled={busy || demo}
@@ -792,10 +798,14 @@ function AdminPage() {
                   .split(/\s+/)
                   .map((x) => x.trim().toLowerCase())
                   .filter(Boolean);
-              await saveAccess(lines(domains), lines(emails));
-              setMessage('利用許可を保存しました。');
+              if (!accessLoaded || savingAccess) return;
+              setSavingAccess(true);
+              await saveAllowedDomains([...new Set(lines(domains))]);
+              setMessage('許可ドメインを保存しました。');
             } catch (e) {
               setMessage((e as Error).message);
+            } finally {
+              setSavingAccess(false);
             }
           }}
         >
@@ -807,16 +817,61 @@ function AdminPage() {
                 placeholder="example.ac.jp"
               />
             </Field>
-            <Field label="個別許可メールアドレス（1行1件）">
-              <textarea
-                value={emails}
-                onChange={(e) => setEmails(e.target.value)}
-                placeholder="member@gmail.com"
-              />
-            </Field>
           </div>
-          <Button disabled={demo}>利用許可を保存</Button>
+          <Button disabled={demo || !accessLoaded || savingAccess}>
+            {savingAccess ? '保存中…' : '許可ドメインを保存'}
+          </Button>
         </form>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (demo || !accessLoaded || savingAccess) return;
+            setSavingAccess(true);
+            try {
+              setSavedEmails(await changeAllowedEmail(emails));
+              setEmails('');
+              setMessage('個別許可メールを追加しました。');
+            } catch (e) {
+              setMessage((e as Error).message);
+            } finally {
+              setSavingAccess(false);
+            }
+          }}
+        >
+          <Field label="追加するメールアドレス">
+            <input
+              type="email"
+              required
+              value={emails}
+              onChange={(e) => setEmails(e.target.value)}
+              placeholder="member@gmail.com"
+              disabled={savingAccess}
+            />
+          </Field>
+          <p className="help-text">
+            1人ずつ追加できます。登録済みのメールアドレスはそのまま残ります。
+          </p>
+          <Button disabled={demo || !accessLoaded || savingAccess || !emails.trim()}>
+            個別許可メールを追加
+          </Button>
+        </form>
+        <AllowedAccounts
+          emails={savedEmails}
+          loaded={accessLoaded}
+          busy={savingAccess}
+          onRemove={async (email) => {
+            if (demo || savingAccess) return;
+            setSavingAccess(true);
+            try {
+              setSavedEmails(await changeAllowedEmail(email, true));
+              setMessage('個別許可から削除しました。参加済みユーザーの利用状態は変わりません。');
+            } catch (e) {
+              setMessage((e as Error).message);
+            } finally {
+              setSavingAccess(false);
+            }
+          }}
+        />
         <p className="help-text">
           許可リストは新規参加を制御します。既存ユーザーを停止する場合は、下の利用状態を無効にしてください。
         </p>

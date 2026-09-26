@@ -12,6 +12,8 @@ import {
   setDoc,
   getDoc,
   getDocs,
+  query,
+  where,
   collection,
   updateDoc,
   writeBatch,
@@ -249,7 +251,11 @@ it('persists real client transactions: edits, collaborative report, Owner approv
   async function snapshot(): Promise<State> {
     const data = createSeed();
     for (const key of Object.keys(data) as (keyof State)[]) {
-      const rows = await getDocs(collection(ownerDb, key));
+      const rows = await getDocs(
+        key === 'travelTemplates'
+          ? query(collection(ownerDb, key), where('userId', '==', 'demo-owner'))
+          : collection(ownerDb, key),
+      );
       (data[key] as unknown[]) = rows.docs.map((d) => ({ id: d.id, ...d.data() }));
     }
     return data;
@@ -340,7 +346,7 @@ it('initialization resumes and preserves existing mission edits without fake awa
   });
   const db = as('demo-owner');
   await initializeProject(db as unknown as Firestore);
-  expect((await getDocs(collection(db, 'wbsItems'))).size).toBe(104);
+  expect((await getDocs(collection(db, 'wbsItems'))).size).toBe(277);
   const mission = (await getDocs(collection(db, 'wbsItems'))).docs.find(
     (d) => d.data().level === 2,
   )!;
@@ -353,7 +359,11 @@ it('initialization resumes and preserves existing mission edits without fake awa
 it('unassigned Team can replace active assignees atomically but cannot alter points or finalized work', async () => {
   const s = createSeed();
   for (const key of Object.keys(s) as (keyof State)[]) {
-    const rows = await getDocs(collection(as('demo-owner'), key));
+    const rows = await getDocs(
+      key === 'travelTemplates'
+        ? query(collection(as('demo-owner'), key), where('userId', '==', 'demo-owner'))
+        : collection(as('demo-owner'), key),
+    );
     (s[key] as unknown[]) = rows.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
   const actor = s.users.find((u) => u.id === 'demo-sato')!;
@@ -411,7 +421,11 @@ it('reference step edits are available to assignees, keep sibling progress and r
   const snapshot = async () => {
     const s = createSeed();
     for (const key of Object.keys(s) as (keyof State)[]) {
-      const rows = await getDocs(collection(as('demo-owner'), key));
+      const rows = await getDocs(
+        key === 'travelTemplates'
+          ? query(collection(as('demo-owner'), key), where('userId', '==', 'demo-owner'))
+          : collection(as('demo-owner'), key),
+      );
       (s[key] as unknown[]) = rows.docs.map((d) => ({ id: d.id, ...d.data() }));
     }
     return s;
@@ -542,4 +556,79 @@ it('MID mixed save and repeated clearing of empty slots succeeds for Team', asyn
   };
   await assertSucceeds(saveAction(state, clear, actor, db as unknown as Firestore));
   await assertSucceeds(saveAction(state, clear, actor, db as unknown as Firestore));
+});
+
+it('restricts individual payment statements to management and validates amounts', async () => {
+  const s = createSeed();
+  const owner = s.users.find((u) => u.role === 'OWNER')!;
+  const id = 'demo-aoki_2026-09-01_2026-09-30';
+  const payment = {
+    userId: 'demo-aoki',
+    periodStart: '2026-09-01',
+    periodEnd: '2026-09-30',
+    aiFee: 3000,
+    travelCost: 1200,
+    pointRate: 100,
+    variableCap: 5000,
+  };
+  await assertSucceeds(setDoc(doc(as(owner.id), 'paymentStatements', id), payment));
+  await assertSucceeds(getDoc(doc(as(owner.id), 'paymentStatements', id)));
+  await assertFails(getDoc(doc(as('demo-aoki'), 'paymentStatements', id)));
+  await assertFails(getDocs(collection(as('demo-aoki'), 'paymentStatements')));
+  await assertFails(setDoc(doc(as('demo-aoki'), 'paymentStatements', id), payment));
+  await assertFails(updateDoc(doc(as(owner.id), 'paymentStatements', id), { variableCap: -1 }));
+  await assertFails(updateDoc(doc(as(owner.id), 'paymentStatements', id), { pointRate: 1.5 }));
+});
+
+it('allows own travel claims and templates, management reads, and blocks other users', async () => {
+  const state = createSeed();
+  const team = state.users.find((u) => u.id === 'demo-aoki')!;
+  const owner = state.users.find((u) => u.role === 'OWNER')!;
+  const item = {
+    id: `${team.id}_2026-09-24`,
+    userId: team.id,
+    date: '2026-09-24',
+    status: 'SUBMITTED' as const,
+    departure: '自宅',
+    arrival: '研究室',
+    trip: 'ROUND_TRIP' as const,
+    busFare: 220,
+    trainFare: 350,
+    parkingFee: 500,
+  };
+  await assertSucceeds(
+    saveAction(state, { type: 'travelClaim', payload: { item } }, team, as(team.id) as unknown as Firestore),
+  );
+  const { date, status, ...route } = item;
+  const template = { ...route, id: `${team.id}_通勤`, name: '通勤' };
+  await assertSucceeds(
+    saveAction(state, { type: 'travelTemplate', payload: { item: template } }, team, as(team.id) as unknown as Firestore),
+  );
+  await assertSucceeds(getDoc(doc(as(owner.id), 'travelClaims', item.id)));
+  await assertSucceeds(getDocs(collection(as(owner.id), 'travelClaims')));
+  await assertFails(getDocs(collection(as(team.id), 'travelClaims')));
+  await assertSucceeds(
+    getDocs(query(collection(as(team.id), 'travelClaims'), where('userId', '==', team.id))),
+  );
+  await assertSucceeds(
+    getDocs(query(collection(as(team.id), 'travelTemplates'), where('userId', '==', team.id))),
+  );
+  const other = state.users.find((u) => u.role === 'TEAM' && u.id !== team.id)!;
+  await assertFails(getDoc(doc(as(other.id), 'travelClaims', item.id)));
+  await assertFails(getDoc(doc(as(owner.id), 'travelTemplates', template.id)));
+  await assertFails(updateDoc(doc(as(other.id), 'travelClaims', item.id), { busFare: 1 }));
+  await assertFails(updateDoc(doc(as(owner.id), 'travelClaims', item.id), { busFare: 1 }));
+  await assertFails(updateDoc(doc(as(team.id), 'travelClaims', item.id), { busFare: -1 }));
+  await assertSucceeds(updateDoc(doc(as(team.id), 'travelClaims', item.id), { status: 'DRAFT' }));
+  await assertSucceeds(
+    saveAction(
+      state,
+      {
+        type: 'travelClaim',
+        payload: { item: { ...item, id: `${owner.id}_${item.date}`, userId: owner.id } },
+      },
+      owner,
+      as(owner.id) as unknown as Firestore,
+    ),
+  );
 });

@@ -162,7 +162,7 @@ export function MissionPanel({ id, close }: { id: string; close: () => void }) {
     m = state.wbsItems.find((x) => x.id === id),
     [mode, setMode] = useState(id === 'new' ? 'edit' : 'detail'),
     [message, setMessage] = useState('');
-  if (!m && id !== 'new') return null;
+  if ((!m && id !== 'new') || (id === 'new' && !canManage(user))) return null;
   const report = state.completionReports.find((r) => r.missionId === id);
   const reward = canManage(user) ? state.rewardPrivate.find((r) => r.id === id) : undefined;
   const involved = !!m?.assigneeIds.includes(user.id);
@@ -736,12 +736,7 @@ function MissionEditor({ item, done }: { item?: WbsItem; done: () => void }) {
           <input name="startDate" type="date" defaultValue={item?.startDate ?? ''} />
         </Field>
         <Field label="期限">
-          <input
-            name="deadline"
-            type="date"
-            defaultValue={item?.deadline ?? '2027-03-31'}
-            required
-          />
+          <input name="deadline" type="date" defaultValue={item?.deadline ?? ''} />
         </Field>
         <Field label="状態">
           <select name="status" defaultValue={item?.status ?? 'OPEN'}>

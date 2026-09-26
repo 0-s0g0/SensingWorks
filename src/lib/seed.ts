@@ -1,3 +1,4 @@
+import petPocInitial from './data/pet-poc-initial.json';
 import { emptyState, phases, type State, type WbsItem, distribute, weekOf } from './domain';
 export const demoUserId = 'demo-aoki';
 export function createSeed(): State {
@@ -179,28 +180,10 @@ export function createSeed(): State {
   return s;
 }
 export function initialProject(): State {
-  const s = createSeed();
-  s.users = [];
-  s.completionReports = [];
-  s.pointAwards = [];
-  s.weeklyReports = [];
-  s.taskAssignments = [];
-  s.activityLogs = [];
-  s.wbsItems = s.wbsItems.map((m) => ({
-    ...m,
-    assigneeIds: [],
-    primaryId: null,
-    status: m.dependencyIds.length ? 'LOCKED' : 'OPEN',
-    completedAt: null,
-    approvedBy: null,
-    finalPoints: {},
-  }));
-  s.rewardPrivate = s.rewardPrivate.map((r) => ({
-    ...r,
-    allocations: {},
-    approvedAt: null,
-    approvedBy: null,
-    paymentStatus: 'DRAFT',
-  }));
-  return s;
+  return {
+    ...structuredClone(petPocInitial),
+    paymentStatements: [],
+    travelClaims: [],
+    travelTemplates: [],
+  } as State;
 }

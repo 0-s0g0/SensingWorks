@@ -1,3 +1,5 @@
+import { validateClaim, validateRoute, type TravelClaim, type TravelTemplate } from './travel';
+import { validatePayment, type PaymentStatement } from './payment';
 import { addDays, startOfWeek } from 'date-fns';
 import { format, jstDate } from './time';
 export type Status =
@@ -122,6 +124,9 @@ export type State = {
   availability: Availability[];
   pointAwards: PointAward[];
   rewardPrivate: RewardPrivate[];
+  paymentStatements: PaymentStatement[];
+  travelClaims: TravelClaim[];
+  travelTemplates: TravelTemplate[];
   activityLogs: ActivityLog[];
 };
 export type Action = {
@@ -136,7 +141,10 @@ export type Action = {
     | 'review'
     | 'report'
     | 'availability'
-    | 'paid';
+    | 'paid'
+    | 'payment'
+    | 'travelClaim'
+    | 'travelTemplate';
   payload: Record<string, unknown>;
 };
 export const statusLabels: Record<Status, string> = {
@@ -185,6 +193,9 @@ export const emptyState = (): State => ({
   availability: [],
   pointAwards: [],
   rewardPrivate: [],
+  paymentStatements: [],
+  travelClaims: [],
+  travelTemplates: [],
   activityLogs: [],
 });
 export const missionsOf = (s: State) => s.wbsItems.filter((m) => m.level === 2);
@@ -251,7 +262,7 @@ export function validateStartDate(startDate: string | undefined, deadline: strin
     new Date(startDate).toISOString().slice(0, 10) !== startDate
   )
     throw Error('開始日を正しい日付で入力してください。');
-  if (startDate > deadline) throw Error('開始日は期限以前の日付にしてください。');
+  if (deadline && startDate > deadline) throw Error('開始日は期限以前の日付にしてください。');
 }
 export function transition(state: State, action: Action, actor: Profile): State {
   if (!actor.active) throw Error('このアカウントは無効です。');
@@ -270,6 +281,39 @@ export function transition(state: State, action: Action, actor: Profile): State 
     if (!m.assigneeIds.includes(actor.id)) throw Error('担当者のみ操作できます。');
   };
   switch (action.type) {
+    case 'travelClaim': {
+      const item = p.item as TravelClaim;
+      if (!isParticipant(actor) || item.userId !== actor.id)
+        throw Error('自分の交通費のみ保存できます。');
+      validateClaim(item);
+      s.travelClaims = [...s.travelClaims.filter((c) => c.id !== item.id), item];
+      break;
+    }
+    case 'travelTemplate': {
+      const item = p.item as TravelTemplate;
+      if (!isParticipant(actor) || item.userId !== actor.id)
+        throw Error('自分の経路のみ保存できます。');
+      validateRoute(item);
+      if (
+        typeof item.name !== 'string' ||
+        !item.name.trim() ||
+        item.name.length > 100 ||
+        item.id !== `${actor.id}_${item.name}` ||
+        item.name.includes('/')
+      )
+        throw Error('経路名は / を含まない100文字以内で入力してください。');
+      s.travelTemplates = [...s.travelTemplates.filter((c) => c.id !== item.id), item];
+      break;
+    }
+    case 'payment': {
+      owner();
+      const item = p.item as PaymentStatement;
+      validatePayment(item);
+      if (!s.users.some((u) => u.id === item.userId && isParticipant(u)))
+        throw Error('対象者が見つかりません。');
+      s.paymentStatements = [...(s.paymentStatements ?? []).filter((x) => x.id !== item.id), item];
+      break;
+    }
     case 'schedule': {
       const m = mission();
       if (!canManage(actor)) assigned(m);
@@ -335,7 +379,8 @@ export function transition(state: State, action: Action, actor: Profile): State 
           throw Error('ステータスが不正です。');
 
         // 期限の検証
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(m.deadline)) throw Error('期限を入力してください。');
+        if (m.deadline && !/^\d{4}-\d{2}-\d{2}$/.test(m.deadline))
+          throw Error('期限を入力してください。');
 
         // 担当者の検証
         if (
@@ -404,7 +449,8 @@ export function transition(state: State, action: Action, actor: Profile): State 
           throw Error('作成済みのWBS番号は変更できません。');
         if (s.wbsItems.some((x) => x.id !== m.id && x.wbsCode === m.wbsCode))
           throw Error('WBS番号が重複しています。');
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(m.deadline)) throw Error('期限を入力してください。');
+        if (m.deadline && !/^\d{4}-\d{2}-\d{2}$/.test(m.deadline))
+          throw Error('期限を入力してください。');
         integer(m.pointValue, '総ポイント', 1);
         integer(p.totalAmount, '内部総報酬');
         if (
@@ -695,6 +741,9 @@ export function transition(state: State, action: Action, actor: Profile): State 
       report: '週報を保存',
       availability: 'MID.予定を更新',
       paid: '支払済みを記録',
+      payment: '支払明細を保存',
+      travelClaim: '交通費申請を保存',
+      travelTemplate: '交通費の経路を保存',
     }[action.type],
     createdAt: now,
   });

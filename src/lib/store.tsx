@@ -59,7 +59,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (raw) {
           const data = JSON.parse(raw);
           if (data.state?.pointAwards && data.state?.wbsItems) {
-            initial = data.state;
+            initial = { ...emptyState(), ...data.state };
             selected = data.userId ?? demoUserId;
           }
         }
@@ -109,6 +109,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               p.role,
               (key, value) => setState((s) => ({ ...s, [key]: value })),
               setError,
+              p.id,
             );
           },
           (e) => {
@@ -161,8 +162,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setBusy(false);
     }
   }
-  // Even the demo context exposed to Team has no financial documents; demo source remains fictional.
-  const visible = canManage(user) ? state : { ...state, rewardPrivate: [] };
+  // Team sees only its own travel records and no management payment documents.
+  const visible = {
+    ...state,
+    travelTemplates: state.travelTemplates.filter((t) => t.userId === user.id),
+    ...(!canManage(user)
+      ? {
+          rewardPrivate: [],
+          paymentStatements: [],
+          travelClaims: state.travelClaims.filter((c) => c.userId === user.id),
+        }
+      : {}),
+  };
   return (
     <Context.Provider
       value={{

@@ -136,36 +136,8 @@ hr {
   margin-top: 9px;
   margin-left: -6px;
 }
-.project-switch {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 9px;
-  margin: 31px 0 28px;
-}
-.project-switch strong {
-  font-size: 11px;
-}
-.project-switch small {
-  display: block;
-  color: var(--muted);
-  font-size: 9px;
-  letter-spacing: 0.5px;
-  margin-top: 5px;
-}
-.project-switch > svg {
-  margin-left: auto;
-  color: #a0aaa8;
-}
-.project-icon {
-  color: var(--primary);
-  background: #eef6f4;
-  padding: 7px;
-  border-radius: 8px;
-}
 .nav-caption {
+  margin-top: 28px;
   font-size: 9px;
   color: #96a19f;
   letter-spacing: 1.6px;

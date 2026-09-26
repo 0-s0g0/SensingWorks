@@ -118,3 +118,15 @@ test('start date saves from WBS and remains after reload', async ({ page }) => {
   await page.getByRole('button', { name: 'すべて展開', exact: true }).click();
   await expect(page.getByTestId('mission-2.2')).toContainText('2026-09-21');
 });
+
+test('Team cannot open creation by URL or see amounts in an assigned mission editor', async ({ page }) => {
+  await page.goto('/wbs/#new');
+  await expect(page.getByRole('heading', { name: 'プロジェクトWBS' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '中工程を追加', exact: true })).toHaveCount(0);
+  await page.goto('/wbs/#mission-2-2');
+  await page.getByRole('button', { name: '中工程を編集', exact: true }).click();
+  await expect(page.getByRole('dialog')).not.toContainText('内部総報酬');
+  await expect(page.getByRole('dialog').locator('input[name=totalAmount]')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).not.toContainText('¥');
+});

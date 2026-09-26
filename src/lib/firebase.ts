@@ -92,14 +92,20 @@ export function subscribeWorkspace(
   role: Profile['role'],
   update: <K extends keyof State>(key: K, value: State[K]) => void,
   error: (message: string) => void,
+  userId: string,
 ): Unsubscribe {
   if (!db) return () => {};
-  const keys = canManage({ role }) ? [...collections, 'rewardPrivate' as const] : collections;
+  const keys = canManage({ role })
+    ? [...collections, 'rewardPrivate' as const, 'paymentStatements' as const]
+    : [...collections];
+  keys.push('travelClaims', 'travelTemplates');
   const unsub = keys.map((key) => {
     const target =
-      key === 'activityLogs'
-        ? query(collection(db!, key), orderBy('createdAt', 'desc'), limit(100))
-        : collection(db!, key);
+      key === 'travelTemplates' || (key === 'travelClaims' && !canManage({ role }))
+        ? query(collection(db!, key), where('userId', '==', userId))
+        : key === 'activityLogs'
+          ? query(collection(db!, key), orderBy('createdAt', 'desc'), limit(100))
+          : collection(db!, key);
     return onSnapshot(
       target,
       (s) => update(key, s.docs.map((d) => ({ ...d.data(), id: d.id })) as State[typeof key]),
@@ -257,6 +263,37 @@ export async function saveAccess(allowedDomains: string[], allowedEmails: string
   if (!db) throw Error('Firebase設定がありません。');
   await setDoc(doc(db, 'settings', 'access'), { allowedDomains, allowedEmails });
 }
+// Read and update together so another administrator's additions are preserved.
+export async function changeAllowedEmail(email: string, remove = false) {
+  const normalized = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized))
+    throw Error('有効なメールアドレスを入力してください。');
+  if (!db) throw Error('Firebase設定がありません。');
+  const target = doc(db, 'settings', 'access');
+  return runTransaction(db, async (tx) => {
+    const current = (await tx.get(target)).data() ?? defaultAccess;
+    const existing = (current.allowedEmails as string[]).map((e) => e.trim().toLowerCase());
+    const allowedEmails = remove
+      ? existing.filter((e) => e !== normalized)
+      : [...new Set([...existing, normalized])];
+    tx.set(target, { ...current, allowedEmails });
+    return allowedEmails;
+  });
+}
+export async function saveAllowedDomains(allowedDomains: string[]) {
+  if (
+    allowedDomains.some(
+      (d) => !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(d),
+    )
+  )
+    throw Error('完全なドメイン名を入力してください。');
+  if (!db) throw Error('Firebase設定がありません。');
+  const target = doc(db, 'settings', 'access');
+  await runTransaction(db, async (tx) => {
+    const current = (await tx.get(target)).data() ?? defaultAccess;
+    tx.set(target, { ...current, allowedDomains });
+  });
+}
 export async function readAccess() {
   if (!db) return defaultAccess;
   const snap = await getDoc(doc(db, 'settings', 'access'));
@@ -290,10 +327,15 @@ export type LoginSession = { id: string; userId: string; email: string; authTime
 export function subscribeLoginSessions(
   update: (rows: LoginSession[]) => void,
   error: (message: string) => void,
+  allHistory = false,
 ) {
   if (!db) return () => {};
   return onSnapshot(
-    query(collection(db, 'loginSessions'), orderBy('authTime', 'desc'), limit(100)),
+    query(
+      collection(db, 'loginSessions'),
+      orderBy('authTime', 'desc'),
+      ...(allHistory ? [] : [limit(100)]),
+    ),
     (snap) => update(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as LoginSession)),
     (e) => error(e.message),
   );
