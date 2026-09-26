@@ -244,7 +244,7 @@ function TravelForm({ date, saved }: { date: string; saved?: TravelClaim }) {
       <Field label="よく使う経路の名前">
         <input
           maxLength={100}
-          placeholder="例：自宅から研究室"
+          placeholder="例：九工大からMID."
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
